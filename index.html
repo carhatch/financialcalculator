@@ -44,7 +44,7 @@
       <section class="planner">
         <form id="planner-form" class="planner__form">
           <div class="form-header">
-            <h2>Your Client Discovery</h2>
+            <h2>Discovery</h2>
             <p>Complete each section to build a comprehensive financial snapshot.</p>
             <div class="progress">
               <div class="progress__bar" role="progressbar"></div>
@@ -54,7 +54,7 @@
                 <span>Expenses</span>
                 <span>Assets</span>
                 <span>Goals</span>
-                <span>Protection</span>
+                <span>Protection (optional)</span>
               </div>
             </div>
           </div>
@@ -256,6 +256,15 @@
                 </select>
               </label>
               <label>
+                Current investment mix
+                <select name="currentInvestment" required>
+                  <option value="">Select</option>
+                  <option value="cash">Primarily cash or savings</option>
+                  <option value="balanced">Balanced allocation</option>
+                  <option value="growth">Growth-oriented portfolio</option>
+                </select>
+              </label>
+              <label>
                 Preferred planning horizon
                 <select name="planningHorizon">
                   <option value="">Select</option>
@@ -267,6 +276,7 @@
             </div>
             <div class="actions">
               <button type="button" data-prev>Back</button>
+              <button type="button" data-skip-protection>Skip protection &amp; build plan</button>
               <button type="button" class="primary" data-next>Next: Protection</button>
             </div>
           </div>

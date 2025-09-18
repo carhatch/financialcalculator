@@ -120,18 +120,22 @@ button {
 }
 
 .planner {
-  margin: 4rem 0 6rem;
-  display: grid;
-  gap: 2.5rem;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  margin: 5rem 0 6.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 3rem;
 }
 
 .planner__form,
 .planner__report {
   background: #fff;
   border-radius: 1.5rem;
-  padding: 2.5rem;
-  box-shadow: 0 25px 45px rgba(15, 23, 42, 0.08);
+  padding: clamp(2.5rem, 4vw, 3.5rem);
+  box-shadow: 0 30px 55px rgba(15, 23, 42, 0.08);
+}
+
+.planner__report {
+  padding-top: clamp(2.8rem, 5vw, 3.8rem);
 }
 
 .form-header h2 {
@@ -191,7 +195,7 @@ button {
 
 .grid {
   display: grid;
-  gap: 1.2rem;
+  gap: 1.4rem;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
@@ -230,10 +234,15 @@ textarea {
 
 .actions {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 1rem;
-  margin-top: 2rem;
+  margin-top: 2.5rem;
+}
+
+.actions [data-prev] {
+  margin-right: auto;
 }
 
 .actions button:not(.primary) {
@@ -253,11 +262,10 @@ textarea {
 }
 
 .report {
-  position: sticky;
-  top: 2rem;
-  max-height: 85vh;
-  overflow: auto;
-  padding-right: 0.75rem;
+  position: static;
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
 }
 
 .report__placeholder {
@@ -288,7 +296,7 @@ textarea {
 
 .report__grid {
   display: grid;
-  gap: 1.5rem;
+  gap: 2rem;
 }
 
 .card {
@@ -384,19 +392,42 @@ textarea {
 }
 
 @media (max-width: 960px) {
-  .planner {
-    grid-template-columns: 1fr;
+  .actions [data-prev] {
+    margin-right: 0;
   }
+}
 
-  .planner__report {
-    position: static;
-    max-height: none;
-  }
+.projection-chart {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 1.5rem;
+}
 
-  .report {
-    position: static;
-    padding-right: 0;
-  }
+.projection-row {
+  display: grid;
+  grid-template-columns: 90px 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.95rem;
+}
+
+.projection-bar {
+  width: 100%;
+  height: 0.75rem;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.1);
+  overflow: hidden;
+}
+
+.projection-bar__fill {
+  height: 100%;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+}
+
+.projection-empty {
+  margin-top: 1.2rem;
+  color: var(--muted);
+  font-size: 0.95rem;
 }
 
 @media (max-width: 640px) {

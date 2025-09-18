@@ -6,6 +6,7 @@ const reportActions = document.querySelector('.report__actions');
 const printButton = document.getElementById('print-report');
 const resetButton = document.getElementById('reset-form');
 const scrollButtons = document.querySelectorAll('[data-scroll]');
+const skipProtectionButtons = document.querySelectorAll('[data-skip-protection]');
 
 let currentStep = 0;
 
@@ -63,6 +64,15 @@ const validateStep = (stepIndex) => {
   return true;
 };
 
+const investmentLabel = (value) =>
+  (
+    {
+      cash: 'Primarily cash or savings',
+      balanced: 'Balanced allocation',
+      growth: 'Growth-oriented portfolio',
+    }[value]
+  ) || 'Not specified';
+
 const buildReport = (data) => {
   const incomes = [
     { label: 'Primary salary / wages', value: parseNumber(data.incomeSalary) },
@@ -87,6 +97,47 @@ const buildReport = (data) => {
   const netCashFlow = totalIncome - totalExpenses;
   const surplusAfterSavings = netCashFlow - monthlySavings;
   const savingsRate = totalIncome ? monthlySavings / totalIncome : 0;
+  const annualSavings = monthlySavings * 12;
+  const investmentPreference = data.currentInvestment || '';
+  const assumedReturnRate =
+    investmentPreference === 'growth'
+      ? 0.08
+      : investmentPreference === 'balanced'
+      ? 0.05
+      : 0;
+
+  const projectionHorizon = 10;
+  let projectionBalance = 0;
+  const projectionPoints = Array.from({ length: projectionHorizon }, (_, index) => {
+    const year = index + 1;
+    projectionBalance = (projectionBalance + annualSavings) * (1 + assumedReturnRate);
+    return { year, balance: projectionBalance };
+  });
+  const maxProjectionBalance = projectionPoints.reduce(
+    (max, point) => Math.max(max, point.balance),
+    0,
+  );
+  const projectionChart =
+    monthlySavings > 0 && maxProjectionBalance > 0
+      ? `<div class="projection-chart">
+          ${projectionPoints
+            .map((point) => {
+              const width = maxProjectionBalance
+                ? Math.min(Math.max((point.balance / maxProjectionBalance) * 100, 8), 100)
+                : 0;
+              return `
+                <div class="projection-row">
+                  <span>Year ${point.year}</span>
+                  <div class="projection-bar">
+                    <div class="projection-bar__fill" style="width: ${width}%"></div>
+                  </div>
+                  <strong>${formatCurrency(point.balance)}</strong>
+                </div>
+              `;
+            })
+            .join('')}
+        </div>`
+      : `<p class="projection-empty">Add monthly savings to preview long-term growth.</p>`;
 
   const assets = [
     { label: 'Cash & emergency savings', value: parseNumber(data.assetCash) },
@@ -229,6 +280,20 @@ const buildReport = (data) => {
     </div>
     <div class="report__grid">
       <article class="card">
+        <h3>Savings outlook</h3>
+        <p>
+          Current investment mix: <strong>${escapeHTML(
+            investmentLabel(investmentPreference),
+          )}</strong>
+        </p>
+        <p>
+          Projected growth assumes ${formatPercent(assumedReturnRate)} annual return on ${formatCurrency(
+            monthlySavings,
+          )} monthly savings.
+        </p>
+        ${projectionChart}
+      </article>
+      <article class="card">
         <h3>Cash flow pulse</h3>
         <ul class="data-list">
           ${incomes
@@ -317,6 +382,9 @@ const buildReport = (data) => {
             )}</p>`
           : ''}
         <p>Risk comfort: <strong>${escapeHTML(data.riskTolerance || 'Not captured')}</strong></p>
+        <p>Investment posture: <strong>${escapeHTML(
+          investmentLabel(investmentPreference),
+        )}</strong></p>
         ${data.planningHorizon
           ? `<p>Planning horizon focus: ${escapeHTML(data.planningHorizon)}</p>`
           : ''}
@@ -356,6 +424,14 @@ const buildReport = (data) => {
   `;
 };
 
+const generatePlan = () => {
+  const formData = new FormData(form);
+  const data = Object.fromEntries(formData.entries());
+  report.innerHTML = buildReport(data);
+  reportActions.hidden = false;
+  report.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
 steps.forEach((step) => {
   step.querySelectorAll('[data-next]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -375,12 +451,14 @@ steps.forEach((step) => {
 form.addEventListener('submit', (event) => {
   event.preventDefault();
   if (!validateStep(currentStep)) return;
+  generatePlan();
+});
 
-  const formData = new FormData(form);
-  const data = Object.fromEntries(formData.entries());
-  report.innerHTML = buildReport(data);
-  reportActions.hidden = false;
-  report.scrollIntoView({ behavior: 'smooth', block: 'start' });
+skipProtectionButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    if (!validateStep(currentStep)) return;
+    generatePlan();
+  });
 });
 
 printButton?.addEventListener('click', () => {
