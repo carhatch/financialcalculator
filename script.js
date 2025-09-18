@@ -99,6 +99,9 @@ const buildReport = (data) => {
   const surplusAfterSavings = netCashFlow - monthlySavings;
   const savingsRate = totalIncome ? monthlySavings / totalIncome : 0;
   const investmentPreference = data.currentInvestment || '';
+  const inheritancePreference = data.inheritancePreference || '';
+  const wantsInheritance = inheritancePreference === 'yes';
+  const desiredInheritanceAmount = parseNumber(data.inheritanceAmount);
   const assumedReturnRate =
     investmentPreference === 'growth'
       ? 0.08
@@ -134,7 +137,7 @@ const buildReport = (data) => {
   const defaultLifeExpectancy = 100;
   const effectiveLifeExpectancy =
     lifeExpectancyInput > 0
-      ? lifeExpectancyInput
+      ? Math.max(lifeExpectancyInput, defaultLifeExpectancy)
       : retirementAge > 0
       ? Math.max(retirementAge, defaultLifeExpectancy)
       : defaultLifeExpectancy;
@@ -146,17 +149,26 @@ const buildReport = (data) => {
 
   const recommendedReturnRate = Math.max(assumedReturnRate, 0.08);
   const conservativeReturnRate = 0.04;
-  const retirementGrowthRate = Math.max(recommendedReturnRate, 0);
-  const requiredNestEgg =
-    desiredRetirementIncome > 0 && retirementDurationYears > 0
-      ? retirementGrowthRate > 0
-        ? desiredRetirementIncome *
-          ((1 - Math.pow(1 + retirementGrowthRate, -retirementDurationYears)) /
-            retirementGrowthRate)
-        : desiredRetirementIncome * retirementDurationYears
-      : desiredRetirementIncome > 0
-      ? desiredRetirementIncome
-      : 0;
+  const monthlyRetirementWithdrawal = desiredRetirementIncome / 12;
+  const retirementMonths = Math.max(Math.round(retirementDurationYears * 12), 0);
+  const conservativeMonthlyRate = Math.pow(1 + conservativeReturnRate, 1 / 12) - 1;
+
+  let requiredNestEgg = 0;
+  if (desiredRetirementIncome > 0) {
+    if (retirementMonths > 0) {
+      requiredNestEgg =
+        conservativeMonthlyRate > 0
+          ? monthlyRetirementWithdrawal *
+            ((1 - Math.pow(1 + conservativeMonthlyRate, -retirementMonths)) /
+              conservativeMonthlyRate)
+          : monthlyRetirementWithdrawal * retirementMonths;
+    } else {
+      requiredNestEgg =
+        conservativeReturnRate > 0
+          ? desiredRetirementIncome / conservativeReturnRate
+          : desiredRetirementIncome;
+    }
+  }
 
   let recommendedMonthlySavings = 0;
   if (requiredNestEgg > 0 && monthsToRetirement > 0) {
@@ -386,6 +398,7 @@ const buildReport = (data) => {
   let retirementStartYear = null;
   let balanceAtRetirement = 0;
   let retirementRunOutYear = null;
+  let inheritanceBalanceAt100 = null;
 
   if (canProjectRetirement) {
     const totalMonths = retirementHorizonYears * 12;
@@ -393,7 +406,6 @@ const buildReport = (data) => {
       Math.ceil(yearsToRetirementExact * 12),
       0,
     );
-    const monthlyWithdrawal = desiredRetirementIncome / 12;
     const accumulationMonthlyRate = Math.pow(1 + assumedReturnRate, 1 / 12) - 1;
     const drawdownMonthlyRate = Math.pow(1 + conservativeReturnRate, 1 / 12) - 1;
     let balance = investableBalance;
@@ -408,8 +420,8 @@ const buildReport = (data) => {
 
       if (inAccumulation) {
         balance += monthlySavings;
-      } else if (monthlyWithdrawal > 0) {
-        balance -= monthlyWithdrawal;
+      } else if (monthlyRetirementWithdrawal > 0) {
+        balance -= monthlyRetirementWithdrawal;
       }
 
       if (inAccumulation && month + 1 === retirementStartMonth) {
@@ -437,6 +449,21 @@ const buildReport = (data) => {
 
     if (runOutMonth !== null) {
       retirementRunOutYear = runOutMonth / 12;
+    }
+
+    if (retirementTrajectory.length) {
+      const ageTarget = 100;
+      const yearsUntilTarget = age
+        ? Math.max(Math.round(ageTarget - age), 0)
+        : ageTarget;
+      const pointAtTarget = retirementTrajectory.find(
+        (point) => point.year >= yearsUntilTarget,
+      );
+      const fallbackPoint = retirementTrajectory[retirementTrajectory.length - 1];
+      inheritanceBalanceAt100 = Math.max(
+        (pointAtTarget || fallbackPoint)?.balance ?? 0,
+        0,
+      );
     }
   }
 
@@ -636,6 +663,11 @@ const buildReport = (data) => {
   const finalRetirementBalance =
     retirementTrajectory?.[retirementTrajectory.length - 1]?.balance || 0;
   const shortfallAtRetirement = Math.max(requiredNestEgg - balanceAtRetirement, 0);
+  const safeWithdrawalIncome = balanceAtRetirement * conservativeReturnRate;
+  const safeWithdrawalDifference =
+    desiredRetirementIncome > 0
+      ? safeWithdrawalIncome - desiredRetirementIncome
+      : null;
   const coversLongevity =
     yearsIntoRetirementAtRunOut === null ||
     yearsIntoRetirementAtRunOut >= targetRetirementYears;
@@ -680,6 +712,93 @@ const buildReport = (data) => {
     ? 'Adjust the target retirement age to be greater than your current age to calculate readiness.'
     : 'Add your target retirement age and desired income to calculate readiness.';
 
+  const retirementPlainLanguage = canProjectRetirement
+    ? (() => {
+        const insights = [];
+        const monthlySavingsDescriptor =
+          monthlySavings > 0
+            ? `saving ${formatCurrency(monthlySavings)} each month`
+            : 'relying on your current balance';
+        insights.push(
+          `If you continue ${monthlySavingsDescriptor} at about ${formatPercent(
+            assumedReturnRate,
+          )} growth, you could have roughly ${formatCurrency(
+            balanceAtRetirement,
+          )} by age ${retirementAge}.`,
+        );
+
+        if (desiredRetirementIncome > 0 && safeWithdrawalDifference !== null) {
+          const gapWord = safeWithdrawalDifference >= 0 ? 'surplus' : 'shortfall';
+          insights.push(
+            `Safe withdrawal of 4% with a conservative ${formatPercent(
+              conservativeReturnRate,
+            )} return would provide about ${formatCurrency(
+              safeWithdrawalIncome,
+            )} per year, leaving a ${gapWord} of ${formatCurrency(
+              Math.abs(safeWithdrawalDifference),
+            )} compared with your ${formatCurrency(desiredRetirementIncome)} goal.`,
+          );
+        } else if (safeWithdrawalIncome > 0) {
+          insights.push(
+            `Safe withdrawal of 4% with a conservative ${formatPercent(
+              conservativeReturnRate,
+            )} return would provide about ${formatCurrency(
+              safeWithdrawalIncome,
+            )} per year from that balance.`,
+          );
+        }
+
+        if (inheritanceBalanceAt100 !== null) {
+          if (inheritanceBalanceAt100 > 0) {
+            insights.push(
+              `We calculate that your savings would still hold about ${formatCurrency(
+                inheritanceBalanceAt100,
+              )} at age 100.`,
+            );
+          } else if (runOutAge) {
+            insights.push(
+              `We calculate that your savings would run out around age ${Math.round(
+                runOutAge,
+              )}, leaving nothing by age 100.`,
+            );
+          } else {
+            insights.push('We calculate that the balance would be fully used by age 100.');
+          }
+        }
+
+        if (inheritanceBalanceAt100 !== null) {
+          if (wantsInheritance && desiredInheritanceAmount > 0) {
+            const inheritanceDifference =
+              inheritanceBalanceAt100 - desiredInheritanceAmount;
+            const inheritanceWord = inheritanceDifference >= 0 ? 'surplus' : 'shortfall';
+            insights.push(
+              `Your inheritance goal of ${formatCurrency(
+                desiredInheritanceAmount,
+              )} would end with a ${inheritanceWord} of ${formatCurrency(
+                Math.abs(inheritanceDifference),
+              )} based on the age 100 projection.`,
+            );
+          } else if (wantsInheritance) {
+            insights.push(
+              `You noted you want to leave an inheritance — the current path points to about ${formatCurrency(
+                inheritanceBalanceAt100,
+              )} available at age 100 for beneficiaries.`,
+            );
+          } else if (inheritanceBalanceAt100 > 0) {
+            insights.push(
+              `Even without a stated inheritance goal, about ${formatCurrency(
+                inheritanceBalanceAt100,
+              )} could remain for beneficiaries at age 100.`,
+            );
+          }
+        }
+
+        return `<div class="retirement-summary">${insights
+          .map((sentence) => `<p>${sentence}</p>`)
+          .join('')}</div>`;
+      })()
+    : '';
+
   const retirementSummaryDetails = [];
   if (retirementAge) {
     retirementSummaryDetails.push(`Target age ${retirementAge}`);
@@ -703,6 +822,11 @@ const buildReport = (data) => {
   }
   if (requiredNestEgg > 0) {
     retirementSummaryDetails.push(`Estimated need ${formatCurrency(requiredNestEgg)}`);
+  }
+  if (wantsInheritance && desiredInheritanceAmount > 0) {
+    retirementSummaryDetails.push(
+      `Inheritance goal ${formatCurrency(desiredInheritanceAmount)} @ age 100`,
+    );
   }
   const retirementSummaryLine = retirementSummaryDetails.length
     ? retirementSummaryDetails.join(' • ')
@@ -859,6 +983,9 @@ const buildReport = (data) => {
     data.shortTermGoals && `Next 12-36 months: ${escapeHTML(data.shortTermGoals)}`,
     data.longTermGoals && `7+ year priorities: ${escapeHTML(data.longTermGoals)}`,
     data.impactGoals && `Impact focus: ${escapeHTML(data.impactGoals)}`,
+    wantsInheritance && desiredInheritanceAmount > 0
+      ? `Inheritance goal: ${formatCurrency(desiredInheritanceAmount)} at age 100`
+      : null,
   ].filter(Boolean);
 
   const planningNotes = [
@@ -916,6 +1043,7 @@ const buildReport = (data) => {
         <p>${retirementSummaryLine}</p>
         ${retirementStatusTag}
         <p>${retirementReadinessCopy}</p>
+        ${retirementPlainLanguage}
         ${retirementChart}
       </article>
       <article class="card card--collapsible is-collapsed">

@@ -274,6 +274,23 @@
                   placeholder="100"
                 />
               </label>
+              <label>
+                Do you want to leave an inheritance?
+                <select name="inheritancePreference">
+                  <option value="">Select</option>
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </select>
+              </label>
+              <label>
+                Desired inheritance amount at age 100
+                <input
+                  name="inheritanceAmount"
+                  type="number"
+                  min="0"
+                  placeholder="50000"
+                />
+              </label>
             </div>
             <div class="actions">
               <button type="button" data-prev>Back</button>
