@@ -593,6 +593,10 @@ textarea {
   stroke: rgba(249, 115, 22, 0.7);
 }
 
+.projection-event-line--death {
+  stroke: rgba(148, 163, 184, 0.8);
+}
+
 .projection-event-label {
   font-size: 0.8rem;
   fill: rgba(71, 85, 105, 0.85);
@@ -601,6 +605,10 @@ textarea {
 
 .projection-event-label--warning {
   fill: var(--warning);
+}
+
+.projection-event-label--death {
+  fill: rgba(51, 65, 85, 0.9);
 }
 
 .projection-labels text {

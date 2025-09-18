@@ -117,9 +117,11 @@ const buildReport = (data) => {
   const yearsToRetirement =
     retirementAge && age ? retirementAge - age : null;
   const baseAge = age > 0 ? age : 0;
-  const ageTarget = 100;
-  const yearsUntilAgeTarget = Math.max(ageTarget - baseAge, 0);
-  const projectionHorizon = Math.max(Math.ceil(yearsUntilAgeTarget), 1);
+  const deathAge = 100;
+  const chartAgeLimit = 105;
+  const yearsUntilDeathAge = Math.max(deathAge - baseAge, 0);
+  const yearsUntilChartLimit = Math.max(chartAgeLimit - baseAge, 0);
+  const projectionHorizon = Math.max(Math.ceil(yearsUntilChartLimit), 1);
   const monthsToRetirement =
     yearsToRetirement !== null
       ? Math.max(Math.ceil(Math.max(yearsToRetirement, 0) * 12), 0)
@@ -419,6 +421,8 @@ const buildReport = (data) => {
       yearsToRetirementExact !== null
         ? Math.max(Math.ceil(yearsToRetirementExact * 12), 0)
         : null;
+    const deathYearOffset = yearsUntilDeathAge;
+    const deathMonthOffset = Math.max(Math.round(deathYearOffset * 12), 0);
 
     let balance = investableBalance;
     const trajectory = [{ year: 0, balance, age: baseAge }];
@@ -442,15 +446,23 @@ const buildReport = (data) => {
     for (let month = 0; month < totalMonths; month++) {
       const inDrawdown =
         retirementStartMonth !== null ? month >= retirementStartMonth : false;
-      const monthlyRate = inDrawdown
+      const reachedDeath =
+        deathMonthOffset > 0
+          ? month >= deathMonthOffset
+          : baseAge >= deathAge;
+      const monthlyRate = reachedDeath
+        ? 0
+        : inDrawdown
         ? conservativeMonthlyRate
         : accumulationMonthlyRate;
       balance = balance * (1 + monthlyRate);
 
-      if (!inDrawdown) {
-        balance += monthlyContribution;
-      } else if (monthlyRetirementWithdrawal > 0) {
-        balance -= monthlyRetirementWithdrawal;
+      if (!reachedDeath) {
+        if (!inDrawdown) {
+          balance += monthlyContribution;
+        } else if (monthlyRetirementWithdrawal > 0) {
+          balance -= monthlyRetirementWithdrawal;
+        }
       }
 
       if (
@@ -490,7 +502,7 @@ const buildReport = (data) => {
     const runOutYear = runOutMonth !== null ? runOutMonth / 12 : null;
     const finalBalance = trajectory[trajectory.length - 1]?.balance ?? balance;
     const targetPoint =
-      trajectory.find((point) => point.year >= yearsUntilAgeTarget) ??
+      trajectory.find((point) => point.year >= yearsUntilDeathAge) ??
       trajectory[trajectory.length - 1];
     const inheritanceBalanceAt100 = Math.max(targetPoint?.balance ?? 0, 0);
     const chartTrajectory = trajectory.filter(
@@ -505,6 +517,8 @@ const buildReport = (data) => {
       runOutYear,
       finalBalance,
       inheritanceBalanceAt100,
+      deathYear: deathYearOffset,
+      deathAge,
     };
   };
 
@@ -632,17 +646,20 @@ const buildReport = (data) => {
         insights.push(
           `${planType === 'recommended' ? 'Under this approach' : 'At the current pace'}, the balance is projected to hold about ${formatCurrency(
             metrics.inheritanceBalanceAt100,
-          )} at age 100.`,
+          )} at age ${deathAge}.`,
         );
-      } else if (metrics.runOutAge && metrics.runOutAge <= ageTarget) {
+      } else if (metrics.runOutAge && metrics.runOutAge <= deathAge) {
         insights.push(
           `${planType === 'recommended' ? 'This approach' : 'We'} calculate that savings would run out around age ${Math.round(
             metrics.runOutAge,
-          )}, leaving nothing by age 100.`,
+          )}, leaving nothing by age ${deathAge}.`,
         );
       } else {
-        insights.push('We calculate that the balance would be fully used by age 100.');
+        insights.push(`We calculate that the balance would be fully used by age ${deathAge}.`);
       }
+      insights.push(
+        `After age ${deathAge}, returns and withdrawals pause so the remaining balance reflects potential inheritance through age ${chartAgeLimit}.`,
+      );
     }
 
     if (
@@ -658,13 +675,13 @@ const buildReport = (data) => {
           desiredInheritanceAmount,
         )} would end with a ${inheritanceWord} of ${formatCurrency(
           Math.abs(inheritanceDifference),
-        )} based on the age 100 projection.`,
+        )} based on the age ${deathAge} projection.`,
       );
     }
 
     if (
       metrics.runOutAge &&
-      metrics.runOutAge <= ageTarget &&
+      metrics.runOutAge <= deathAge &&
       metrics.yearsIntoRetirementDescription
     ) {
       insights.push(
@@ -699,7 +716,7 @@ const buildReport = (data) => {
 
     const chartWidth = 640;
     const chartHeight = 320;
-    const padding = { top: 20, right: 32, bottom: 48, left: 72 };
+    const padding = { top: 72, right: 32, bottom: 48, left: 72 };
 
     const xScale = (year) =>
       padding.left +
@@ -779,6 +796,8 @@ const buildReport = (data) => {
 
     const events = (() => {
       const markers = [];
+      const labelY = padding.top - 18;
+
       if (metrics.retirementStartYear !== null) {
         const clampedYear = Math.min(metrics.retirementStartYear, projectionHorizon);
         const x = xScale(clampedYear);
@@ -790,7 +809,9 @@ const buildReport = (data) => {
           )}" y1="${padding.top}" y2="${chartHeight - padding.bottom}" />`,
         );
         markers.push(
-          `<text class="projection-event-label" x="${x.toFixed(2)}" y="${chartHeight - padding.bottom + 20}" text-anchor="middle">Retirement (Age ${retirementAgeLabel})</text>`,
+          `<text class="projection-event-label" x="${x.toFixed(
+            2,
+          )}" y="${labelY}" text-anchor="middle" dominant-baseline="ideographic">Retirement (Age ${retirementAgeLabel})</text>`,
         );
       }
       if (metrics.runOutYear !== null) {
@@ -813,7 +834,22 @@ const buildReport = (data) => {
         markers.push(
           `<text class="projection-event-label projection-event-label--warning" x="${x.toFixed(
             2,
-          )}" y="${chartHeight - padding.bottom + 20}" text-anchor="middle">${label} (Age ${ageLabel})</text>`,
+          )}" y="${labelY}" text-anchor="middle" dominant-baseline="ideographic">${label} (Age ${ageLabel})</text>`,
+        );
+      }
+      if (metrics.deathYear !== undefined && metrics.deathYear !== null) {
+        const clampedYear = Math.min(metrics.deathYear, projectionHorizon);
+        const x = xScale(clampedYear);
+        const deathAgeLabel = metrics.deathAge ?? Math.round(baseAge + clampedYear);
+        markers.push(
+          `<line class="projection-event-line projection-event-line--death" x1="${x.toFixed(
+            2,
+          )}" x2="${x.toFixed(2)}" y1="${padding.top}" y2="${chartHeight - padding.bottom}" />`,
+        );
+        markers.push(
+          `<text class="projection-event-label projection-event-label--death" x="${x.toFixed(
+            2,
+          )}" y="${labelY}" text-anchor="middle" dominant-baseline="ideographic">Death (Age ${deathAgeLabel})</text>`,
         );
       }
       return markers.join('');
@@ -881,7 +917,7 @@ const buildReport = (data) => {
   }
   if (wantsInheritance && desiredInheritanceAmount > 0) {
     retirementSummaryDetails.push(
-      `Inheritance goal ${formatCurrency(desiredInheritanceAmount)} @ age 100`,
+      `Inheritance goal ${formatCurrency(desiredInheritanceAmount)} @ age ${deathAge}`,
     );
   }
   const retirementSummaryLine = retirementSummaryDetails.length
@@ -895,7 +931,7 @@ const buildReport = (data) => {
         )}</div>`
       : currentPlanMetrics.coversLongevity
       ? `<div class="tag tag--success">On pace — withdrawals funded through age ${
-          longevityAge ? Math.round(Math.min(longevityAge, ageTarget)) : ageTarget
+          longevityAge ? Math.round(Math.min(longevityAge, deathAge)) : deathAge
         }</div>`
       : `<div class="tag tag--alert">Withdrawals exhaust savings around age ${
           currentPlanMetrics.runOutAge ??
@@ -921,7 +957,7 @@ const buildReport = (data) => {
         )} at age ${retirementAge} support ${formatCurrency(
           desiredRetirementIncome,
         )} annually through age ${
-          longevityAge ? Math.round(Math.min(longevityAge, ageTarget)) : ageTarget
+          longevityAge ? Math.round(Math.min(longevityAge, deathAge)) : deathAge
         }, leaving approximately ${formatCurrency(
           currentPlanMetrics.inheritanceBalanceAt100 ?? finalRetirementBalance,
         )} remaining.`
@@ -977,7 +1013,7 @@ const buildReport = (data) => {
           )}</div>`
         : recommendedPlanMetrics.coversLongevity
         ? `<div class="tag tag--success">Recommendation funds withdrawals through age ${
-            longevityAge ? Math.round(Math.min(longevityAge, ageTarget)) : ageTarget
+            longevityAge ? Math.round(Math.min(longevityAge, deathAge)) : deathAge
           }</div>`
         : `<div class="tag tag--alert">Recommendation still runs out around age ${
             recommendedPlanMetrics.runOutAge ??
@@ -1006,7 +1042,7 @@ const buildReport = (data) => {
           )} at age ${retirementAge}, funding ${formatCurrency(
             desiredRetirementIncome,
           )} annually through age ${
-            longevityAge ? Math.round(Math.min(longevityAge, ageTarget)) : ageTarget
+            longevityAge ? Math.round(Math.min(longevityAge, deathAge)) : deathAge
           }.`
         : `Saving ${formatCurrency(
             recommendedMonthlySavings,
@@ -1171,7 +1207,7 @@ const buildReport = (data) => {
     data.longTermGoals && `7+ year priorities: ${escapeHTML(data.longTermGoals)}`,
     data.impactGoals && `Impact focus: ${escapeHTML(data.impactGoals)}`,
     wantsInheritance && desiredInheritanceAmount > 0
-      ? `Inheritance goal: ${formatCurrency(desiredInheritanceAmount)} at age 100`
+    ? `Inheritance goal: ${formatCurrency(desiredInheritanceAmount)} at age ${deathAge}`
       : null,
   ].filter(Boolean);
 
