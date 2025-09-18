@@ -111,17 +111,97 @@ const buildReport = (data) => {
     parseNumber(data.assetRetirement) +
     parseNumber(data.assetOther);
 
-  const projectionHorizon = 10;
+  const age = parseNumber(data.age);
+  const retirementAge = parseNumber(data.retirementAge);
+  const yearsToRetirement =
+    retirementAge && age ? retirementAge - age : null;
+  const monthsToRetirement =
+    yearsToRetirement !== null
+      ? Math.max(Math.ceil(yearsToRetirement * 12), 0)
+      : 0;
 
-  const buildProjectionSeries = (horizonYears, annualContribution, rate) => {
-    let balance = investableBalance;
-    return Array.from({ length: horizonYears + 1 }, (_, index) => {
-      if (index === 0) {
-        return { year: index, balance };
+  const planningHorizonInput = parseNumber(data.planningHorizon);
+  const projectionHorizon =
+    planningHorizonInput > 0
+      ? Math.max(Math.ceil(planningHorizonInput), 1)
+      : yearsToRetirement !== null && yearsToRetirement > 0
+      ? Math.max(Math.ceil(yearsToRetirement), 1)
+      : 10;
+
+  const lifeExpectancyInput = parseNumber(data.lifeExpectancy);
+  const defaultLifeExpectancy = 100;
+  const effectiveLifeExpectancy =
+    lifeExpectancyInput > 0
+      ? lifeExpectancyInput
+      : retirementAge > 0
+      ? Math.max(retirementAge, defaultLifeExpectancy)
+      : defaultLifeExpectancy;
+  const retirementDurationYears =
+    retirementAge > 0
+      ? Math.max(effectiveLifeExpectancy - retirementAge, 0)
+      : 0;
+  const desiredRetirementIncome = parseNumber(data.retirementIncome);
+
+  const recommendedReturnRate = Math.max(assumedReturnRate, 0.08);
+  const retirementGrowthRate = Math.max(recommendedReturnRate, 0);
+  const requiredNestEgg =
+    desiredRetirementIncome > 0 && retirementDurationYears > 0
+      ? retirementGrowthRate > 0
+        ? desiredRetirementIncome *
+          ((1 - Math.pow(1 + retirementGrowthRate, -retirementDurationYears)) /
+            retirementGrowthRate)
+        : desiredRetirementIncome * retirementDurationYears
+      : desiredRetirementIncome > 0
+      ? desiredRetirementIncome
+      : 0;
+
+  let recommendedMonthlySavings = 0;
+  if (requiredNestEgg > 0 && monthsToRetirement > 0) {
+    const recommendedMonthlyRate = Math.pow(1 + recommendedReturnRate, 1 / 12) - 1;
+    const growthFactor = Math.pow(1 + recommendedMonthlyRate, monthsToRetirement);
+    if (recommendedMonthlyRate > 0 && growthFactor > 1) {
+      recommendedMonthlySavings =
+        ((requiredNestEgg - investableBalance * growthFactor) * recommendedMonthlyRate) /
+        (growthFactor - 1);
+    } else {
+      recommendedMonthlySavings =
+        (requiredNestEgg - investableBalance) / monthsToRetirement;
+    }
+  }
+  recommendedMonthlySavings = Number.isFinite(recommendedMonthlySavings)
+    ? Math.max(0, recommendedMonthlySavings)
+    : 0;
+
+  const contributionYears =
+    yearsToRetirement !== null && yearsToRetirement > 0
+      ? yearsToRetirement
+      : projectionHorizon;
+
+  const buildProjectionSeries = (
+    initialBalance,
+    horizonYears,
+    monthlyContribution,
+    annualRate,
+    contributionYearsOverride = contributionYears,
+  ) => {
+    const totalMonths = Math.max(Math.ceil(horizonYears * 12), 0);
+    const contributionMonths = Math.max(
+      Math.ceil(Math.min(contributionYearsOverride, horizonYears) * 12),
+      0,
+    );
+    const monthlyRate = Math.pow(1 + annualRate, 1 / 12) - 1;
+    let balance = initialBalance;
+    const series = [{ year: 0, balance }];
+    for (let month = 0; month < totalMonths; month++) {
+      balance = balance * (1 + monthlyRate);
+      if (month < contributionMonths) {
+        balance += monthlyContribution;
       }
-      balance = balance * (1 + rate) + annualContribution;
-      return { year: index, balance };
-    });
+      if ((month + 1) % 12 === 0) {
+        series.push({ year: (month + 1) / 12, balance });
+      }
+    }
+    return series;
   };
 
   const projectionYears = Array.from(
@@ -129,20 +209,20 @@ const buildReport = (data) => {
     (_, index) => index,
   );
 
-  const currentAnnualSavings = monthlySavings * 12;
   const currentSeries = buildProjectionSeries(
+    investableBalance,
     projectionHorizon,
-    currentAnnualSavings,
+    monthlySavings,
     assumedReturnRate,
+    contributionYears,
   );
 
-  const recommendedMonthlySavings = Math.max(monthlySavings, totalIncome * 0.15);
-  const recommendedReturnRate = Math.max(assumedReturnRate, 0.08);
-  const recommendedAnnualSavings = recommendedMonthlySavings * 12;
   const recommendedSeries = buildProjectionSeries(
+    investableBalance,
     projectionHorizon,
-    recommendedAnnualSavings,
+    recommendedMonthlySavings,
     recommendedReturnRate,
+    contributionYears,
   );
 
   const maxProjectionBalance = Math.max(
@@ -282,10 +362,6 @@ const buildReport = (data) => {
           finalCurrentBalance,
         )} in ${projectionHorizon} years.`;
 
-  const safeWithdrawalRate = 0.04;
-  const requiredNestEgg =
-    desiredRetirementIncome > 0 ? desiredRetirementIncome / safeWithdrawalRate : 0;
-
   const retirementYearsAway =
     yearsToRetirement !== null ? Math.max(Math.ceil(yearsToRetirement), 0) : null;
   const displayYearsToRetirement =
@@ -294,7 +370,15 @@ const buildReport = (data) => {
     retirementYearsAway !== null && retirementYearsAway > 0 && requiredNestEgg > 0;
 
   const retirementSeries = canProjectRetirement
-    ? buildProjectionSeries(retirementYearsAway, currentAnnualSavings, assumedReturnRate)
+    ? buildProjectionSeries(
+        investableBalance,
+        retirementYearsAway,
+        monthlySavings,
+        assumedReturnRate,
+        yearsToRetirement !== null && yearsToRetirement > 0
+          ? yearsToRetirement
+          : retirementYearsAway,
+      )
     : null;
 
   const shortfallSeries = retirementSeries
@@ -533,19 +617,24 @@ const buildReport = (data) => {
         </div>`
       : `<p class="projection-empty">Add retirement timing and income goals to see projected shortfall.</p>`;
 
+  const savingsGap = recommendedMonthlySavings - monthlySavings;
   const recommendationCopy =
-    recommendedMonthlySavings > monthlySavings && recommendedMonthlySavings > 0
-      ? `Increasing monthly savings to ${formatCurrency(
+    recommendedMonthlySavings > 0 && savingsGap > 1
+      ? `Saving ${formatCurrency(
           recommendedMonthlySavings,
-        )} and aiming for ${formatPercent(
+        )} per month at an expected ${formatPercent(
           recommendedReturnRate,
-        )} growth aligns with long-term goals.`
+        )} return keeps the plan on pace to meet your retirement income target.`
       : recommendedMonthlySavings > 0
-      ? `Maintaining monthly savings of ${formatCurrency(
+      ? `Current monthly savings of ${formatCurrency(
           monthlySavings,
-        )} while targeting ${formatPercent(
+        )} already meet the estimated need of ${formatCurrency(
+          recommendedMonthlySavings,
+        )} per month assuming ${formatPercent(
           recommendedReturnRate,
-        )} growth keeps you on the advised track.`
+        )} growth.`
+      : requiredNestEgg > 0
+      ? 'Existing assets appear sufficient to support the stated retirement income goal without additional monthly contributions.'
       : 'Add monthly savings to begin compounding progress toward your goals.';
 
   const assets = [
@@ -570,11 +659,6 @@ const buildReport = (data) => {
   const emergencyCoverage = totalExpenses
     ? parseNumber(data.assetCash) / totalExpenses
     : 0;
-
-  const age = parseNumber(data.age);
-  const retirementAge = parseNumber(data.retirementAge);
-  const yearsToRetirement = retirementAge && age ? retirementAge - age : null;
-  const desiredRetirementIncome = parseNumber(data.retirementIncome);
 
   const recommendations = [];
 
@@ -789,18 +873,32 @@ const buildReport = (data) => {
               .map((goal) => `<li>${goal}</li>`)
               .join('')}</ul>`
           : '<p>No goals captured yet. Use this space to align on what matters most.</p>'}
-        ${yearsToRetirement !== null
-          ? `<p>Retirement horizon: ${yearsToRetirement} years • Desired income: ${formatCurrency(
-              desiredRetirementIncome,
-            )}</p>`
-          : ''}
+        ${
+          yearsToRetirement !== null
+            ? `<p>Retirement horizon: ${
+                displayYearsToRetirement ?? yearsToRetirement
+              } years • Desired income: ${formatCurrency(
+                desiredRetirementIncome,
+              )}</p>`
+            : desiredRetirementIncome > 0
+            ? `<p>Desired retirement income: ${formatCurrency(
+                desiredRetirementIncome,
+              )}</p>`
+            : ''
+        }
         <p>Risk comfort: <strong>${escapeHTML(data.riskTolerance || 'Not captured')}</strong></p>
         <p>Investment posture: <strong>${escapeHTML(
           investmentLabel(investmentPreference),
         )}</strong></p>
-        ${data.planningHorizon
-          ? `<p>Planning horizon focus: ${escapeHTML(data.planningHorizon)}</p>`
-          : ''}
+        <p>Longevity planning age: ${Math.round(effectiveLifeExpectancy)}</p>
+        <p>
+          Planning horizon focus:
+          ${
+            data.planningHorizon
+              ? `${escapeHTML(data.planningHorizon)} years`
+              : `${projectionHorizon} years`
+          }
+        </p>
       </article>
 
       <article class="card">

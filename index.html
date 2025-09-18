@@ -265,13 +265,23 @@
                 </select>
               </label>
               <label>
-                Preferred planning horizon
-                <select name="planningHorizon">
-                  <option value="">Select</option>
-                  <option value="short">0-5 years</option>
-                  <option value="medium">5-15 years</option>
-                  <option value="long">15+ years</option>
-                </select>
+                Planning horizon
+                <input
+                  name="planningHorizon"
+                  type="number"
+                  min="1"
+                  placeholder="30"
+                />
+              </label>
+              <label>
+                Expected longevity
+                <input
+                  name="lifeExpectancy"
+                  type="number"
+                  min="70"
+                  max="120"
+                  placeholder="100"
+                />
               </label>
             </div>
             <div class="actions">
