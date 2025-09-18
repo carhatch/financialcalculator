@@ -145,6 +145,7 @@ const buildReport = (data) => {
   const desiredRetirementIncome = parseNumber(data.retirementIncome);
 
   const recommendedReturnRate = Math.max(assumedReturnRate, 0.08);
+  const conservativeReturnRate = 0.04;
   const retirementGrowthRate = Math.max(recommendedReturnRate, 0);
   const requiredNestEgg =
     desiredRetirementIncome > 0 && retirementDurationYears > 0
@@ -339,13 +340,6 @@ const buildReport = (data) => {
                 })
                 .join('')}
             </g>
-            <text class="projection-axis-label" x="${
-              chartPadding.left +
-              (chartWidth - chartPadding.left - chartPadding.right) / 2
-            }" y="${chartHeight - 10}" text-anchor="middle">Time (years)</text>
-            <text class="projection-axis-label" transform="rotate(-90)" x="${-
-              (chartPadding.top + (chartHeight - chartPadding.top - chartPadding.bottom) / 2)
-            }" y="${chartPadding.left - 52}" text-anchor="middle">Value</text>
           </svg>
           <div class="projection-legend">
             <span class="legend-item"><span class="legend-swatch legend-swatch--current"></span>Current contributions (${formatCurrency(
@@ -369,37 +363,87 @@ const buildReport = (data) => {
           finalCurrentBalance,
         )} in ${projectionHorizon} years.`;
 
+  const yearsToRetirementExact =
+    yearsToRetirement !== null ? Math.max(yearsToRetirement, 0) : null;
   const retirementYearsAway =
-    yearsToRetirement !== null ? Math.max(Math.ceil(yearsToRetirement), 0) : null;
+    yearsToRetirementExact !== null ? Math.max(Math.ceil(yearsToRetirementExact), 0) : null;
   const displayYearsToRetirement =
-    yearsToRetirement !== null ? Math.max(Math.round(yearsToRetirement), 0) : null;
+    yearsToRetirementExact !== null ? Math.max(Math.round(yearsToRetirementExact), 0) : null;
+  const drawdownYears = Math.max(
+    Math.ceil(Math.max(retirementDurationYears, 1)),
+    1,
+  );
+  const retirementHorizonYears =
+    retirementYearsAway !== null ? retirementYearsAway + drawdownYears : null;
   const canProjectRetirement =
-    retirementYearsAway !== null && retirementYearsAway > 0 && requiredNestEgg > 0;
+    retirementYearsAway !== null &&
+    retirementYearsAway > 0 &&
+    retirementHorizonYears !== null &&
+    retirementHorizonYears > retirementYearsAway &&
+    requiredNestEgg > 0;
 
-  const retirementSeries = canProjectRetirement
-    ? buildProjectionSeries(
-        investableBalance,
-        retirementYearsAway,
-        monthlySavings,
-        assumedReturnRate,
-        yearsToRetirement !== null && yearsToRetirement > 0
-          ? yearsToRetirement
-          : retirementYearsAway,
-      )
-    : null;
+  let retirementTrajectory = null;
+  let retirementStartYear = null;
+  let balanceAtRetirement = 0;
+  let retirementRunOutYear = null;
 
-  const shortfallSeries = retirementSeries
-    ? retirementSeries.map(({ year, balance }) => ({
-        year,
-        gap: Math.max(requiredNestEgg - balance, 0),
-      }))
-    : null;
+  if (canProjectRetirement) {
+    const totalMonths = retirementHorizonYears * 12;
+    const retirementStartMonth = Math.max(
+      Math.ceil(yearsToRetirementExact * 12),
+      0,
+    );
+    const monthlyWithdrawal = desiredRetirementIncome / 12;
+    const accumulationMonthlyRate = Math.pow(1 + assumedReturnRate, 1 / 12) - 1;
+    const drawdownMonthlyRate = Math.pow(1 + conservativeReturnRate, 1 / 12) - 1;
+    let balance = investableBalance;
+    let runOutMonth = null;
+    retirementStartYear = retirementStartMonth / 12;
+    retirementTrajectory = [{ year: 0, balance }];
+
+    for (let month = 0; month < totalMonths; month++) {
+      const inAccumulation = month < retirementStartMonth;
+      const monthlyRate = inAccumulation ? accumulationMonthlyRate : drawdownMonthlyRate;
+      balance = balance * (1 + monthlyRate);
+
+      if (inAccumulation) {
+        balance += monthlySavings;
+      } else if (monthlyWithdrawal > 0) {
+        balance -= monthlyWithdrawal;
+      }
+
+      if (inAccumulation && month + 1 === retirementStartMonth) {
+        balanceAtRetirement = balance;
+      }
+
+      if (!inAccumulation && runOutMonth === null && balance <= 0) {
+        runOutMonth = month + 1;
+        balance = 0;
+      } else if (!inAccumulation && balance < 0) {
+        balance = 0;
+      }
+
+      if ((month + 1) % 12 === 0) {
+        retirementTrajectory.push({ year: (month + 1) / 12, balance });
+      }
+    }
+
+    if (!balanceAtRetirement) {
+      const retirementPoint = retirementTrajectory.find(
+        (point) => point.year >= retirementStartYear,
+      );
+      balanceAtRetirement = retirementPoint ? retirementPoint.balance : balance;
+    }
+
+    if (runOutMonth !== null) {
+      retirementRunOutYear = runOutMonth / 12;
+    }
+  }
 
   const retirementChartMax = Math.max(
     0,
     requiredNestEgg,
-    ...(retirementSeries?.map((point) => point.balance) || []),
-    ...(shortfallSeries?.map((point) => point.gap) || []),
+    ...(retirementTrajectory?.map((point) => point.balance) || []),
   );
 
   const retirementChartWidth = 640;
@@ -408,7 +452,7 @@ const buildReport = (data) => {
 
   const retirementXScale = (year) =>
     retirementPadding.left +
-    (year / retirementYearsAway) *
+    (year / retirementHorizonYears) *
       (retirementChartWidth - retirementPadding.left - retirementPadding.right);
 
   const retirementYScale = (value) => {
@@ -425,20 +469,20 @@ const buildReport = (data) => {
   };
 
   const retirementTickInterval = canProjectRetirement
-    ? Math.max(1, Math.round(retirementYearsAway / 5))
+    ? Math.max(1, Math.round(retirementHorizonYears / 5))
     : 1;
 
   let retirementYearTicks = [];
   if (canProjectRetirement) {
     retirementYearTicks = Array.from(
-      { length: retirementYearsAway + 1 },
+      { length: retirementHorizonYears + 1 },
       (_, index) => index,
     ).filter((year) => year % retirementTickInterval === 0);
 
     if (
-      retirementYearTicks[retirementYearTicks.length - 1] !== retirementYearsAway
+      retirementYearTicks[retirementYearTicks.length - 1] !== retirementHorizonYears
     ) {
-      retirementYearTicks.push(retirementYearsAway);
+      retirementYearTicks.push(retirementHorizonYears);
     }
   }
 
@@ -449,7 +493,7 @@ const buildReport = (data) => {
   );
 
   const retirementBalancePath =
-    retirementSeries
+    retirementTrajectory
       ?.map((point, idx) => {
         const command = idx === 0 ? 'M' : 'L';
         return `${command}${retirementXScale(point.year).toFixed(2)} ${retirementYScale(
@@ -458,20 +502,10 @@ const buildReport = (data) => {
       })
       .join('') || '';
 
-  const retirementShortfallPath =
-    shortfallSeries
-      ?.map((point, idx) => {
-        const command = idx === 0 ? 'M' : 'L';
-        return `${command}${retirementXScale(point.year).toFixed(2)} ${retirementYScale(
-          point.gap,
-        ).toFixed(2)}`;
-      })
-      .join('') || '';
-
   const retirementMarkerInterval = canProjectRetirement
-    ? Math.max(1, Math.round(retirementYearsAway / 6))
+    ? Math.max(1, Math.round(retirementHorizonYears / 6))
     : 1;
-  const buildRetirementMarkers = (series, key) =>
+  const buildRetirementMarkers = (series) =>
     series
       ?.filter(
         (point, index, arr) =>
@@ -479,13 +513,89 @@ const buildReport = (data) => {
       )
       .map((point) => {
         const x = retirementXScale(point.year);
-        const y = retirementYScale(point[key]);
+        const y = retirementYScale(point.balance);
         return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="3" />`;
       })
       .join('') || '';
 
-  const retirementBalanceMarkers = buildRetirementMarkers(retirementSeries, 'balance');
-  const retirementShortfallMarkers = buildRetirementMarkers(shortfallSeries, 'gap');
+  const retirementBalanceMarkers = buildRetirementMarkers(retirementTrajectory);
+
+  const yearsIntoRetirementAtRunOut =
+    retirementRunOutYear !== null && retirementStartYear !== null
+      ? Math.max(retirementRunOutYear - retirementStartYear, 0)
+      : null;
+  const runOutAge =
+    retirementRunOutYear !== null && age
+      ? Math.round(age + retirementRunOutYear)
+      : retirementRunOutYear !== null && retirementAge
+      ? Math.round(retirementAge + Math.max(yearsIntoRetirementAtRunOut || 0, 0))
+      : null;
+  const yearsIntoRetirementDisplay =
+    yearsIntoRetirementAtRunOut !== null
+      ? Math.max(Math.round(yearsIntoRetirementAtRunOut), 0)
+      : null;
+  const yearsIntoRetirementText =
+    yearsIntoRetirementAtRunOut !== null
+      ? yearsIntoRetirementAtRunOut < 1
+        ? '< 1'
+        : `${Math.max(yearsIntoRetirementDisplay || 1, 1)}`
+      : null;
+  const yearsIntoRetirementDescription =
+    yearsIntoRetirementText !== null
+      ? yearsIntoRetirementText === '< 1'
+        ? 'less than 1 year'
+        : `${yearsIntoRetirementText} year${yearsIntoRetirementText === '1' ? '' : 's'}`
+      : null;
+  const targetRetirementYears =
+    retirementDurationYears > 0 ? retirementDurationYears : drawdownYears;
+  const longevityAge =
+    retirementAge > 0 ? retirementAge + Math.max(retirementDurationYears, 0) : null;
+
+  const retirementEventMarkers = canProjectRetirement
+    ? (() => {
+        const events = [];
+        if (retirementStartYear !== null) {
+          const x = retirementXScale(retirementStartYear);
+          events.push(
+            `<line class="projection-event-line" x1="${x.toFixed(2)}" x2="${x.toFixed(
+              2,
+            )}" y1="${retirementPadding.top}" y2="${
+              retirementChartHeight - retirementPadding.bottom
+            }" />`,
+          );
+          events.push(
+            `<text class="projection-event-label" x="${x.toFixed(2)}" y="${
+              retirementChartHeight - retirementPadding.bottom + 20
+            }" text-anchor="middle">Retirement</text>`,
+          );
+        }
+        if (retirementRunOutYear !== null) {
+          const x = retirementXScale(
+            Math.min(retirementRunOutYear, retirementHorizonYears),
+          );
+          const label = yearsIntoRetirementText !== null
+            ? yearsIntoRetirementText === '< 1'
+              ? 'Run out <1 yr in'
+              : `Run out ${yearsIntoRetirementText} yr${
+                  yearsIntoRetirementText === '1' ? '' : 's'
+                } in`
+            : 'Run out';
+          events.push(
+            `<line class="projection-event-line projection-event-line--warning" x1="${x.toFixed(
+              2,
+            )}" x2="${x.toFixed(2)}" y1="${retirementPadding.top}" y2="${
+              retirementChartHeight - retirementPadding.bottom
+            }" />`,
+          );
+          events.push(
+            `<text class="projection-event-label projection-event-label--warning" x="${x.toFixed(
+              2,
+            )}" y="${retirementChartHeight - retirementPadding.bottom + 20}" text-anchor="middle">${label}</text>`,
+          );
+        }
+        return events.join('');
+      })()
+    : '';
 
   const retirementGridHorizontal = retirementYAxisTicks
     .map((tick) => {
@@ -524,38 +634,48 @@ const buildReport = (data) => {
     .join('');
 
   const finalRetirementBalance =
-    retirementSeries?.[retirementSeries.length - 1]?.balance || 0;
-  const finalRetirementShortfall =
-    shortfallSeries?.[shortfallSeries.length - 1]?.gap || 0;
-  const finalRetirementSurplus = Math.max(
-    finalRetirementBalance - requiredNestEgg,
-    0,
-  );
+    retirementTrajectory?.[retirementTrajectory.length - 1]?.balance || 0;
+  const shortfallAtRetirement = Math.max(requiredNestEgg - balanceAtRetirement, 0);
+  const coversLongevity =
+    yearsIntoRetirementAtRunOut === null ||
+    yearsIntoRetirementAtRunOut >= targetRetirementYears;
 
   const retirementStatusTag = canProjectRetirement
-    ? finalRetirementShortfall > 0
+    ? shortfallAtRetirement > 0
       ? `<div class="tag tag--alert">Shortfall at retirement: ${formatCurrency(
-          finalRetirementShortfall,
+          shortfallAtRetirement,
         )}</div>`
-      : finalRetirementSurplus > 0
-      ? `<div class="tag tag--success">On track — surplus of ${formatCurrency(
-          finalRetirementSurplus,
-        )}</div>`
-      : '<div class="tag tag--success">On track — no projected shortfall</div>'
+      : coversLongevity
+      ? `<div class="tag tag--success">On pace — withdrawals funded through age ${
+          longevityAge ? Math.round(longevityAge) : retirementAge + drawdownYears
+        }</div>`
+      : `<div class="tag tag--alert">Withdrawals exhaust savings around age ${
+          runOutAge ?? Math.round(retirementAge + (yearsIntoRetirementAtRunOut || 0))
+        }</div>`
     : '';
 
   const retirementReadinessCopy = canProjectRetirement
-    ? finalRetirementShortfall > 0
-      ? `Staying on the current path is projected to build ${formatCurrency(
-          finalRetirementBalance,
-        )} by age ${retirementAge}, leaving a shortfall of ${formatCurrency(
-          finalRetirementShortfall,
-        )} versus the estimated need of ${formatCurrency(requiredNestEgg)}.`
-      : `Projected savings of ${formatCurrency(
-          finalRetirementBalance,
-        )} by age ${retirementAge} exceed the estimated need of ${formatCurrency(
+    ? shortfallAtRetirement > 0
+      ? `Current contributions are projected to build ${formatCurrency(
+          balanceAtRetirement,
+        )} by age ${retirementAge}, leaving ${formatCurrency(
+          shortfallAtRetirement,
+        )} less than the ${formatCurrency(
           requiredNestEgg,
-        )}, eliminating any shortfall.`
+        )} estimated to fund ${formatCurrency(desiredRetirementIncome)} per year.`
+      : coversLongevity
+      ? `Projected savings of ${formatCurrency(
+          balanceAtRetirement,
+        )} at age ${retirementAge} support ${formatCurrency(
+          desiredRetirementIncome,
+        )} annually through age ${
+          longevityAge ? Math.round(longevityAge) : retirementAge + drawdownYears
+        }, leaving approximately ${formatCurrency(finalRetirementBalance)} remaining.`
+      : `Projected savings meet the income goal at retirement, but drawing ${formatCurrency(
+          desiredRetirementIncome,
+        )} annually is estimated to deplete savings around age ${
+          runOutAge ?? Math.round(retirementAge + (yearsIntoRetirementAtRunOut || 0))
+        } (${yearsIntoRetirementDescription || '0 years'} into retirement). Increase savings or adjust withdrawals to extend coverage.`
     : yearsToRetirement !== null && yearsToRetirement <= 0
     ? 'Adjust the target retirement age to be greater than your current age to calculate readiness.'
     : 'Add your target retirement age and desired income to calculate readiness.';
@@ -569,6 +689,16 @@ const buildReport = (data) => {
       yearsToRetirement > 0
         ? `${displayYearsToRetirement} years away`
         : 'Retirement timing has already arrived',
+    );
+  }
+  if (desiredRetirementIncome > 0) {
+    retirementSummaryDetails.push(
+      `Income goal ${formatCurrency(desiredRetirementIncome)}/yr`,
+    );
+  }
+  if (balanceAtRetirement > 0) {
+    retirementSummaryDetails.push(
+      `Projected balance ${formatCurrency(balanceAtRetirement)}`,
     );
   }
   if (requiredNestEgg > 0) {
@@ -594,12 +724,11 @@ const buildReport = (data) => {
           retirementChartHeight - retirementPadding.bottom
         }" />
             <path class="projection-line projection-line--current" d="${retirementBalancePath}" />
-            <path class="projection-line projection-line--shortfall" d="${retirementShortfallPath}" />
             <g class="projection-markers projection-markers--current">
               ${retirementBalanceMarkers}
             </g>
-            <g class="projection-markers projection-markers--shortfall">
-              ${retirementShortfallMarkers}
+            <g class="projection-events">
+              ${retirementEventMarkers}
             </g>
             <g class="projection-labels projection-labels--x">
               ${retirementXAxisLabels}
@@ -607,23 +736,14 @@ const buildReport = (data) => {
             <g class="projection-labels projection-labels--y">
               ${retirementYAxisLabels}
             </g>
-            <text class="projection-axis-label" x="${
-              retirementPadding.left +
-              (retirementChartWidth - retirementPadding.left - retirementPadding.right) / 2
-            }" y="${retirementChartHeight - 10}" text-anchor="middle">Time to retirement (years)</text>
-            <text class="projection-axis-label" transform="rotate(-90)" x="${-
-              (retirementPadding.top +
-                (retirementChartHeight - retirementPadding.top - retirementPadding.bottom) / 2)
-            }" y="${retirementPadding.left - 52}" text-anchor="middle">Value</text>
           </svg>
           <div class="projection-legend">
-            <span class="legend-item"><span class="legend-swatch legend-swatch--current"></span>Projected assets (current contributions)</span>
-            <span class="legend-item"><span class="legend-swatch legend-swatch--shortfall"></span>Remaining shortfall to reach ${formatCurrency(
-              requiredNestEgg,
-            )}</span>
+            <span class="legend-item"><span class="legend-swatch legend-swatch--current"></span>Account value (contributions until retirement, then ${formatCurrency(
+              desiredRetirementIncome,
+            )}/yr withdrawals @ ${formatPercent(conservativeReturnRate)})</span>
           </div>
         </div>`
-      : `<p class="projection-empty">Add retirement timing and income goals to see projected shortfall.</p>`;
+      : `<p class="projection-empty">Add retirement timing and income goals to see projected drawdown.</p>`;
 
   const savingsGap = recommendedMonthlySavings - monthlySavings;
   const recommendationCopy =

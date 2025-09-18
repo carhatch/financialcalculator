@@ -563,6 +563,30 @@ textarea {
   stroke: var(--warning);
 }
 
+.projection-events {
+  pointer-events: none;
+}
+
+.projection-event-line {
+  stroke: rgba(37, 99, 235, 0.55);
+  stroke-width: 1;
+  stroke-dasharray: 4 6;
+}
+
+.projection-event-line--warning {
+  stroke: rgba(249, 115, 22, 0.7);
+}
+
+.projection-event-label {
+  font-size: 0.8rem;
+  fill: rgba(71, 85, 105, 0.85);
+  font-weight: 600;
+}
+
+.projection-event-label--warning {
+  fill: var(--warning);
+}
+
 .projection-labels text {
   font-size: 0.8rem;
   fill: rgba(71, 85, 105, 0.75);
