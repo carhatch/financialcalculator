@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Financial Planning Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero__content container">
+        <div>
+          <p class="badge">Financial Planning Studio</p>
+          <h1>Design a financial plan that grows with you.</h1>
+          <p class="subtitle">
+            Gather detailed insights, uncover opportunities, and deliver a
+            professional-grade financial roadmap in minutes.
+          </p>
+          <ul class="hero__highlights">
+            <li>Step-by-step intake to capture every detail</li>
+            <li>Instant plan preview with actionable recommendations</li>
+            <li>Polished report ready to download or present</li>
+          </ul>
+        </div>
+        <div class="hero__card">
+          <h2>How it works</h2>
+          <ol>
+            <li>Complete the guided discovery form</li>
+            <li>Review the dynamically generated plan</li>
+            <li>Download or print the client-ready report</li>
+          </ol>
+          <button class="primary" data-scroll="#planner">Start planning</button>
+        </div>
+      </div>
+    </header>
+
+    <main id="planner" class="container">
+      <section class="planner">
+        <form id="planner-form" class="planner__form">
+          <div class="form-header">
+            <h2>Your Client Discovery</h2>
+            <p>Complete each section to build a comprehensive financial snapshot.</p>
+            <div class="progress">
+              <div class="progress__bar" role="progressbar"></div>
+              <div class="progress__steps">
+                <span>Profile</span>
+                <span>Income</span>
+                <span>Expenses</span>
+                <span>Assets</span>
+                <span>Goals</span>
+                <span>Protection</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-step active" data-step="0">
+            <h3>Household Profile</h3>
+            <div class="grid">
+              <label>
+                Full name
+                <input name="fullName" type="text" placeholder="Jordan Taylor" required />
+              </label>
+              <label>
+                Email
+                <input name="email" type="email" placeholder="hello@email.com" required />
+              </label>
+              <label>
+                Age
+                <input name="age" type="number" min="18" placeholder="34" required />
+              </label>
+              <label>
+                Household status
+                <select name="householdStatus" required>
+                  <option value="">Select</option>
+                  <option value="single">Single</option>
+                  <option value="couple">Couple / Married</option>
+                  <option value="family">Family with dependents</option>
+                </select>
+              </label>
+              <label>
+                Number of dependents
+                <input name="dependents" type="number" min="0" placeholder="2" />
+              </label>
+              <label>
+                Primary advisor notes
+                <textarea name="profileNotes" rows="3" placeholder="Career stage, lifestyle priorities, major life events"></textarea>
+              </label>
+            </div>
+            <div class="actions">
+              <button type="button" class="primary" data-next>Next: Income</button>
+            </div>
+          </div>
+
+          <div class="form-step" data-step="1">
+            <h3>Income &amp; Saving Streams <span>(monthly)</span></h3>
+            <div class="grid">
+              <label>
+                Primary salary / wages
+                <input name="incomeSalary" type="number" min="0" placeholder="7500" required />
+              </label>
+              <label>
+                Secondary income
+                <input name="incomeSecondary" type="number" min="0" placeholder="1200" />
+              </label>
+              <label>
+                Bonus or commission average
+                <input name="incomeBonus" type="number" min="0" placeholder="400" />
+              </label>
+              <label>
+                Other recurring income
+                <input name="incomeOther" type="number" min="0" placeholder="450" />
+              </label>
+              <label>
+                Monthly savings contributions
+                <input name="monthlySavings" type="number" min="0" placeholder="1250" />
+              </label>
+              <label>
+                Employer retirement match (% of salary)
+                <input name="retirementMatch" type="number" min="0" max="100" step="0.5" placeholder="4" />
+              </label>
+            </div>
+            <div class="actions">
+              <button type="button" data-prev>Back</button>
+              <button type="button" class="primary" data-next>Next: Expenses</button>
+            </div>
+          </div>
+
+          <div class="form-step" data-step="2">
+            <h3>Core Living Expenses <span>(monthly)</span></h3>
+            <div class="grid">
+              <label>
+                Housing (rent / mortgage)
+                <input name="expenseHousing" type="number" min="0" placeholder="2300" required />
+              </label>
+              <label>
+                Transportation
+                <input name="expenseTransport" type="number" min="0" placeholder="550" />
+              </label>
+              <label>
+                Groceries &amp; dining
+                <input name="expenseFood" type="number" min="0" placeholder="820" />
+              </label>
+              <label>
+                Insurance premiums
+                <input name="expenseInsurance" type="number" min="0" placeholder="390" />
+              </label>
+              <label>
+                Debt payments
+                <input name="expenseDebt" type="number" min="0" placeholder="680" />
+              </label>
+              <label>
+                Lifestyle &amp; discretionary
+                <input name="expenseLifestyle" type="number" min="0" placeholder="750" />
+              </label>
+              <label>
+                Education / childcare
+                <input name="expenseEducation" type="number" min="0" placeholder="900" />
+              </label>
+              <label>
+                Healthcare out-of-pocket
+                <input name="expenseHealth" type="number" min="0" placeholder="200" />
+              </label>
+            </div>
+            <div class="actions">
+              <button type="button" data-prev>Back</button>
+              <button type="button" class="primary" data-next>Next: Assets</button>
+            </div>
+          </div>
+
+          <div class="form-step" data-step="3">
+            <h3>Balance Sheet Snapshot</h3>
+            <div class="grid">
+              <label>
+                Cash &amp; emergency savings
+                <input name="assetCash" type="number" min="0" placeholder="15000" required />
+              </label>
+              <label>
+                Investment accounts (taxable)
+                <input name="assetInvestments" type="number" min="0" placeholder="42000" />
+              </label>
+              <label>
+                Retirement accounts (401k, IRA)
+                <input name="assetRetirement" type="number" min="0" placeholder="88000" />
+              </label>
+              <label>
+                Real estate equity
+                <input name="assetRealEstate" type="number" min="0" placeholder="120000" />
+              </label>
+              <label>
+                Business or other assets
+                <input name="assetOther" type="number" min="0" placeholder="15000" />
+              </label>
+              <label>
+                Mortgage balance
+                <input name="debtMortgage" type="number" min="0" placeholder="240000" />
+              </label>
+              <label>
+                Student loans
+                <input name="debtStudent" type="number" min="0" placeholder="18000" />
+              </label>
+              <label>
+                Credit cards &amp; personal loans
+                <input name="debtCredit" type="number" min="0" placeholder="6200" />
+              </label>
+              <label>
+                Other liabilities
+                <input name="debtOther" type="number" min="0" placeholder="3000" />
+              </label>
+              <label>
+                Current emergency fund target (months of expenses)
+                <input name="emergencyTarget" type="number" min="0" step="0.5" placeholder="6" />
+              </label>
+            </div>
+            <div class="actions">
+              <button type="button" data-prev>Back</button>
+              <button type="button" class="primary" data-next>Next: Goals</button>
+            </div>
+          </div>
+
+          <div class="form-step" data-step="4">
+            <h3>Goals, Milestones &amp; Retirement</h3>
+            <div class="grid">
+              <label>
+                Target retirement age
+                <input name="retirementAge" type="number" min="40" max="80" placeholder="62" />
+              </label>
+              <label>
+                Desired annual retirement income
+                <input name="retirementIncome" type="number" min="0" placeholder="85000" />
+              </label>
+              <label>
+                Major goals in next 5 years
+                <textarea name="shortTermGoals" rows="3" placeholder="Home renovations, travel sabbatical, education funding"></textarea>
+              </label>
+              <label>
+                Long-term priorities
+                <textarea name="longTermGoals" rows="3" placeholder="College funding, second home, legacy planning"></textarea>
+              </label>
+              <label>
+                Philanthropic or impact goals
+                <textarea name="impactGoals" rows="3" placeholder="Recurring donations, donor-advised fund, volunteering"></textarea>
+              </label>
+              <label>
+                Risk comfort level
+                <select name="riskTolerance" required>
+                  <option value="">Select</option>
+                  <option value="conservative">Conservative</option>
+                  <option value="balanced">Balanced</option>
+                  <option value="growth">Growth-oriented</option>
+                </select>
+              </label>
+              <label>
+                Preferred planning horizon
+                <select name="planningHorizon">
+                  <option value="">Select</option>
+                  <option value="short">0-5 years</option>
+                  <option value="medium">5-15 years</option>
+                  <option value="long">15+ years</option>
+                </select>
+              </label>
+            </div>
+            <div class="actions">
+              <button type="button" data-prev>Back</button>
+              <button type="button" class="primary" data-next>Next: Protection</button>
+            </div>
+          </div>
+
+          <div class="form-step" data-step="5">
+            <h3>Protection &amp; Contingency Planning</h3>
+            <div class="grid">
+              <label>
+                Life insurance coverage amount
+                <input name="lifeInsurance" type="number" min="0" placeholder="500000" />
+              </label>
+              <label>
+                Disability insurance coverage
+                <input name="disabilityInsurance" type="number" min="0" placeholder="3500" />
+              </label>
+              <label>
+                Estate planning documents in place?
+                <select name="estatePlanning">
+                  <option value="">Select</option>
+                  <option value="complete">Yes, documents current</option>
+                  <option value="inprogress">In progress</option>
+                  <option value="notyet">Not yet</option>
+                </select>
+              </label>
+              <label>
+                Primary financial concerns
+                <textarea name="concerns" rows="3" placeholder="Market volatility, college costs, tax efficiency"></textarea>
+              </label>
+              <label>
+                Upcoming life events
+                <textarea name="lifeEvents" rows="3" placeholder="Expected relocation, family changes, career move"></textarea>
+              </label>
+            </div>
+            <div class="actions">
+              <button type="button" data-prev>Back</button>
+              <button type="submit" class="primary">Generate plan</button>
+            </div>
+          </div>
+        </form>
+
+        <aside class="planner__report">
+          <div class="report" id="report">
+            <div class="report__placeholder">
+              <h3>Financial plan preview</h3>
+              <p>
+                Complete the discovery to reveal a personalized plan including cash
+                flow insights, balance sheet, retirement readiness, and action items.
+              </p>
+            </div>
+          </div>
+          <div class="report__actions" hidden>
+            <button class="primary" id="print-report">Download / Print report</button>
+            <button id="reset-form">Start a new plan</button>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <div>
+          <h4>Need a hand interpreting the plan?</h4>
+          <p>
+            Use these insights as a starting point and refine them with your
+            financial professional for a fully customized roadmap.
+          </p>
+        </div>
+        <div class="footer__cta">
+          <p class="badge">Ready to get started?</p>
+          <button class="primary" data-scroll="body">Back to top</button>
+        </div>
+      </div>
+    </footer>
+
+    <script src="script.js"></script>
+  </body>
+</html>
