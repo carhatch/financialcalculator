@@ -50,7 +50,6 @@ const showStep = (index) => {
     step.classList.toggle('active', idx === currentStep);
   });
   updateProgress();
-  steps[currentStep].scrollIntoView({ behavior: 'smooth', block: 'start' });
 };
 
 const validateStep = (stepIndex) => {
