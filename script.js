@@ -97,7 +97,6 @@ const buildReport = (data) => {
   const netCashFlow = totalIncome - totalExpenses;
   const surplusAfterSavings = netCashFlow - monthlySavings;
   const savingsRate = totalIncome ? monthlySavings / totalIncome : 0;
-  const annualSavings = monthlySavings * 12;
   const investmentPreference = data.currentInvestment || '';
   const assumedReturnRate =
     investmentPreference === 'growth'
@@ -106,38 +105,188 @@ const buildReport = (data) => {
       ? 0.05
       : 0;
 
+  const investableBalance =
+    parseNumber(data.assetCash) +
+    parseNumber(data.assetInvestments) +
+    parseNumber(data.assetRetirement) +
+    parseNumber(data.assetOther);
+
   const projectionHorizon = 10;
-  let projectionBalance = 0;
-  const projectionPoints = Array.from({ length: projectionHorizon }, (_, index) => {
-    const year = index + 1;
-    projectionBalance = (projectionBalance + annualSavings) * (1 + assumedReturnRate);
-    return { year, balance: projectionBalance };
-  });
-  const maxProjectionBalance = projectionPoints.reduce(
-    (max, point) => Math.max(max, point.balance),
-    0,
+  const years = Array.from({ length: projectionHorizon + 1 }, (_, index) => index);
+
+  const computeProjection = (annualContribution, rate) => {
+    let balance = investableBalance;
+    return years.map((year, idx) => {
+      if (idx === 0) {
+        return { year, balance };
+      }
+      balance = balance * (1 + rate) + annualContribution;
+      return { year, balance };
+    });
+  };
+
+  const currentAnnualSavings = monthlySavings * 12;
+  const currentSeries = computeProjection(currentAnnualSavings, assumedReturnRate);
+
+  const recommendedMonthlySavings = Math.max(monthlySavings, totalIncome * 0.15);
+  const recommendedReturnRate = Math.max(assumedReturnRate, 0.08);
+  const recommendedAnnualSavings = recommendedMonthlySavings * 12;
+  const recommendedSeries = computeProjection(
+    recommendedAnnualSavings,
+    recommendedReturnRate,
   );
+
+  const maxProjectionBalance = Math.max(
+    0,
+    ...currentSeries.map((point) => point.balance),
+    ...recommendedSeries.map((point) => point.balance),
+  );
+
+  const chartWidth = 640;
+  const chartHeight = 320;
+  const chartPadding = { top: 20, right: 32, bottom: 48, left: 72 };
+
+  const xScale = (year) =>
+    chartPadding.left +
+    (year / projectionHorizon) * (chartWidth - chartPadding.left - chartPadding.right);
+
+  const yScale = (value) => {
+    if (!maxProjectionBalance) {
+      return chartHeight - chartPadding.bottom;
+    }
+    const usableHeight = chartHeight - chartPadding.top - chartPadding.bottom;
+    return chartHeight - chartPadding.bottom - (value / maxProjectionBalance) * usableHeight;
+  };
+
+  const buildPath = (series) =>
+    series
+      .map((point, idx) => {
+        const command = idx === 0 ? 'M' : 'L';
+        return `${command}${xScale(point.year).toFixed(2)} ${yScale(point.balance).toFixed(2)}`;
+      })
+      .join(' ');
+
+  const currentPath = buildPath(currentSeries);
+  const recommendedPath = buildPath(recommendedSeries);
+
+  const xTickInterval = Math.max(1, Math.round(projectionHorizon / 5));
+  const xTicks = years.filter((year) => year % xTickInterval === 0);
+
+  const yTickCount = 4;
+  const yTicks = Array.from({ length: yTickCount + 1 }, (_, index) =>
+    (maxProjectionBalance / yTickCount) * index,
+  );
+
+  const finalCurrentBalance = currentSeries[currentSeries.length - 1]?.balance || 0;
+  const finalRecommendedBalance = recommendedSeries[recommendedSeries.length - 1]?.balance || 0;
+  const additionalGrowth = Math.max(finalRecommendedBalance - finalCurrentBalance, 0);
+
   const projectionChart =
-    monthlySavings > 0 && maxProjectionBalance > 0
-      ? `<div class="projection-chart">
-          ${projectionPoints
-            .map((point) => {
-              const width = maxProjectionBalance
-                ? Math.min(Math.max((point.balance / maxProjectionBalance) * 100, 8), 100)
-                : 0;
-              return `
-                <div class="projection-row">
-                  <span>Year ${point.year}</span>
-                  <div class="projection-bar">
-                    <div class="projection-bar__fill" style="width: ${width}%"></div>
-                  </div>
-                  <strong>${formatCurrency(point.balance)}</strong>
-                </div>
-              `;
-            })
-            .join('')}
+    maxProjectionBalance > 0
+      ? `<div class="projection-graph">
+          <svg viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="Savings projections over time">
+            <g class="projection-grid">
+              ${yTicks
+                .map((tick) => {
+                  const y = yScale(tick);
+                  return `<line x1="${chartPadding.left}" x2="${chartWidth - chartPadding.right}" y1="${y.toFixed(
+                    2,
+                  )}" y2="${y.toFixed(2)}" />`;
+                })
+                .join('')}
+              ${xTicks
+                .map((tick) => {
+                  const x = xScale(tick);
+                  return `<line y1="${chartPadding.top}" y2="${chartHeight - chartPadding.bottom}" x1="${x.toFixed(
+                    2,
+                  )}" x2="${x.toFixed(2)}" />`;
+                })
+                .join('')}
+            </g>
+            <line class="projection-axis" x1="${chartPadding.left}" y1="${chartHeight - chartPadding.bottom}" x2="${chartWidth - chartPadding.right}" y2="${chartHeight - chartPadding.bottom}" />
+            <line class="projection-axis" x1="${chartPadding.left}" y1="${chartPadding.top}" x2="${chartPadding.left}" y2="${chartHeight - chartPadding.bottom}" />
+            <path class="projection-line projection-line--current" d="${currentPath}" />
+            <path class="projection-line projection-line--recommended" d="${recommendedPath}" />
+            <g class="projection-markers projection-markers--current">
+              ${currentSeries
+                .map((point) => {
+                  const x = xScale(point.year);
+                  const y = yScale(point.balance);
+                  return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="4" />`;
+                })
+                .join('')}
+            </g>
+            <g class="projection-markers projection-markers--recommended">
+              ${recommendedSeries
+                .map((point) => {
+                  const x = xScale(point.year);
+                  const y = yScale(point.balance);
+                  return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="4" />`;
+                })
+                .join('')}
+            </g>
+            <g class="projection-labels projection-labels--x">
+              ${xTicks
+                .map((tick) => {
+                  const x = xScale(tick);
+                  return `<text x="${x.toFixed(2)}" y="${chartHeight - chartPadding.bottom + 24}" text-anchor="middle">Year ${tick}</text>`;
+                })
+                .join('')}
+            </g>
+            <g class="projection-labels projection-labels--y">
+              ${yTicks
+                .map((tick) => {
+                  const y = yScale(tick);
+                  return `<text x="${chartPadding.left - 12}" y="${(y + 6).toFixed(
+                    2,
+                  )}" text-anchor="end">${formatCurrency(tick)}</text>`;
+                })
+                .join('')}
+            </g>
+            <text class="projection-axis-label" x="${
+              chartPadding.left +
+              (chartWidth - chartPadding.left - chartPadding.right) / 2
+            }" y="${chartHeight - 10}" text-anchor="middle">Time (years)</text>
+            <text class="projection-axis-label" transform="rotate(-90)" x="${-
+              (chartPadding.top + (chartHeight - chartPadding.top - chartPadding.bottom) / 2)
+            }" y="${chartPadding.left - 52}" text-anchor="middle">Value</text>
+          </svg>
+          <div class="projection-legend">
+            <span class="legend-item"><span class="legend-swatch legend-swatch--current"></span>Current contributions (${formatCurrency(
+              monthlySavings,
+            )}/mo @ ${formatPercent(assumedReturnRate)})</span>
+            <span class="legend-item"><span class="legend-swatch legend-swatch--recommended"></span>Recommended plan (${formatCurrency(
+              recommendedMonthlySavings,
+            )}/mo @ ${formatPercent(recommendedReturnRate)})</span>
+          </div>
         </div>`
-      : `<p class="projection-empty">Add monthly savings to preview long-term growth.</p>`;
+      : `<p class="projection-empty">Enter savings and asset details to preview long-term growth.</p>`;
+
+  const projectionComparison =
+    additionalGrowth > 0
+      ? `Following the recommended path could build approximately ${formatCurrency(
+          finalRecommendedBalance,
+        )} in ${projectionHorizon} years — about ${formatCurrency(
+          additionalGrowth,
+        )} more than continuing with the current approach.`
+      : `At the current settings, both paths are projected to reach about ${formatCurrency(
+          finalCurrentBalance,
+        )} in ${projectionHorizon} years.`;
+
+  const recommendationCopy =
+    recommendedMonthlySavings > monthlySavings && recommendedMonthlySavings > 0
+      ? `Increasing monthly savings to ${formatCurrency(
+          recommendedMonthlySavings,
+        )} and aiming for ${formatPercent(
+          recommendedReturnRate,
+        )} growth aligns with long-term goals.`
+      : recommendedMonthlySavings > 0
+      ? `Maintaining monthly savings of ${formatCurrency(
+          monthlySavings,
+        )} while targeting ${formatPercent(
+          recommendedReturnRate,
+        )} growth keeps you on the advised track.`
+      : 'Add monthly savings to begin compounding progress toward your goals.';
 
   const assets = [
     { label: 'Cash & emergency savings', value: parseNumber(data.assetCash) },
@@ -286,11 +435,8 @@ const buildReport = (data) => {
             investmentLabel(investmentPreference),
           )}</strong>
         </p>
-        <p>
-          Projected growth assumes ${formatPercent(assumedReturnRate)} annual return on ${formatCurrency(
-            monthlySavings,
-          )} monthly savings.
-        </p>
+        <p>${recommendationCopy}</p>
+        <p>${projectionComparison}</p>
         ${projectionChart}
       </article>
       <article class="card">
