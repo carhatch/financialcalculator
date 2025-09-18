@@ -112,26 +112,35 @@ const buildReport = (data) => {
     parseNumber(data.assetOther);
 
   const projectionHorizon = 10;
-  const years = Array.from({ length: projectionHorizon + 1 }, (_, index) => index);
 
-  const computeProjection = (annualContribution, rate) => {
+  const buildProjectionSeries = (horizonYears, annualContribution, rate) => {
     let balance = investableBalance;
-    return years.map((year, idx) => {
-      if (idx === 0) {
-        return { year, balance };
+    return Array.from({ length: horizonYears + 1 }, (_, index) => {
+      if (index === 0) {
+        return { year: index, balance };
       }
       balance = balance * (1 + rate) + annualContribution;
-      return { year, balance };
+      return { year: index, balance };
     });
   };
 
+  const projectionYears = Array.from(
+    { length: projectionHorizon + 1 },
+    (_, index) => index,
+  );
+
   const currentAnnualSavings = monthlySavings * 12;
-  const currentSeries = computeProjection(currentAnnualSavings, assumedReturnRate);
+  const currentSeries = buildProjectionSeries(
+    projectionHorizon,
+    currentAnnualSavings,
+    assumedReturnRate,
+  );
 
   const recommendedMonthlySavings = Math.max(monthlySavings, totalIncome * 0.15);
   const recommendedReturnRate = Math.max(assumedReturnRate, 0.08);
   const recommendedAnnualSavings = recommendedMonthlySavings * 12;
-  const recommendedSeries = computeProjection(
+  const recommendedSeries = buildProjectionSeries(
+    projectionHorizon,
     recommendedAnnualSavings,
     recommendedReturnRate,
   );
@@ -170,7 +179,7 @@ const buildReport = (data) => {
   const recommendedPath = buildPath(recommendedSeries);
 
   const xTickInterval = Math.max(1, Math.round(projectionHorizon / 5));
-  const xTicks = years.filter((year) => year % xTickInterval === 0);
+  const xTicks = projectionYears.filter((year) => year % xTickInterval === 0);
 
   const yTickCount = 4;
   const yTicks = Array.from({ length: yTickCount + 1 }, (_, index) =>
@@ -272,6 +281,257 @@ const buildReport = (data) => {
       : `At the current settings, both paths are projected to reach about ${formatCurrency(
           finalCurrentBalance,
         )} in ${projectionHorizon} years.`;
+
+  const safeWithdrawalRate = 0.04;
+  const requiredNestEgg =
+    desiredRetirementIncome > 0 ? desiredRetirementIncome / safeWithdrawalRate : 0;
+
+  const retirementYearsAway =
+    yearsToRetirement !== null ? Math.max(Math.ceil(yearsToRetirement), 0) : null;
+  const displayYearsToRetirement =
+    yearsToRetirement !== null ? Math.max(Math.round(yearsToRetirement), 0) : null;
+  const canProjectRetirement =
+    retirementYearsAway !== null && retirementYearsAway > 0 && requiredNestEgg > 0;
+
+  const retirementSeries = canProjectRetirement
+    ? buildProjectionSeries(retirementYearsAway, currentAnnualSavings, assumedReturnRate)
+    : null;
+
+  const shortfallSeries = retirementSeries
+    ? retirementSeries.map(({ year, balance }) => ({
+        year,
+        gap: Math.max(requiredNestEgg - balance, 0),
+      }))
+    : null;
+
+  const retirementChartMax = Math.max(
+    0,
+    requiredNestEgg,
+    ...(retirementSeries?.map((point) => point.balance) || []),
+    ...(shortfallSeries?.map((point) => point.gap) || []),
+  );
+
+  const retirementChartWidth = 640;
+  const retirementChartHeight = 320;
+  const retirementPadding = { top: 20, right: 32, bottom: 48, left: 72 };
+
+  const retirementXScale = (year) =>
+    retirementPadding.left +
+    (year / retirementYearsAway) *
+      (retirementChartWidth - retirementPadding.left - retirementPadding.right);
+
+  const retirementYScale = (value) => {
+    if (!retirementChartMax) {
+      return retirementChartHeight - retirementPadding.bottom;
+    }
+    const usableHeight =
+      retirementChartHeight - retirementPadding.top - retirementPadding.bottom;
+    return (
+      retirementChartHeight -
+      retirementPadding.bottom -
+      (value / retirementChartMax) * usableHeight
+    );
+  };
+
+  const retirementTickInterval = canProjectRetirement
+    ? Math.max(1, Math.round(retirementYearsAway / 5))
+    : 1;
+
+  let retirementYearTicks = [];
+  if (canProjectRetirement) {
+    retirementYearTicks = Array.from(
+      { length: retirementYearsAway + 1 },
+      (_, index) => index,
+    ).filter((year) => year % retirementTickInterval === 0);
+
+    if (
+      retirementYearTicks[retirementYearTicks.length - 1] !== retirementYearsAway
+    ) {
+      retirementYearTicks.push(retirementYearsAway);
+    }
+  }
+
+  const retirementYAxisSteps = 4;
+  const retirementYAxisTicks = Array.from(
+    { length: retirementYAxisSteps + 1 },
+    (_, index) => (retirementChartMax / retirementYAxisSteps) * index,
+  );
+
+  const retirementBalancePath =
+    retirementSeries
+      ?.map((point, idx) => {
+        const command = idx === 0 ? 'M' : 'L';
+        return `${command}${retirementXScale(point.year).toFixed(2)} ${retirementYScale(
+          point.balance,
+        ).toFixed(2)}`;
+      })
+      .join('') || '';
+
+  const retirementShortfallPath =
+    shortfallSeries
+      ?.map((point, idx) => {
+        const command = idx === 0 ? 'M' : 'L';
+        return `${command}${retirementXScale(point.year).toFixed(2)} ${retirementYScale(
+          point.gap,
+        ).toFixed(2)}`;
+      })
+      .join('') || '';
+
+  const retirementBalanceMarkers =
+    retirementSeries
+      ?.map((point) => {
+        const x = retirementXScale(point.year);
+        const y = retirementYScale(point.balance);
+        return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="4" />`;
+      })
+      .join('') || '';
+
+  const retirementShortfallMarkers =
+    shortfallSeries
+      ?.map((point) => {
+        const x = retirementXScale(point.year);
+        const y = retirementYScale(point.gap);
+        return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="4" />`;
+      })
+      .join('') || '';
+
+  const retirementGridHorizontal = retirementYAxisTicks
+    .map((tick) => {
+      const y = retirementYScale(tick);
+      return `<line x1="${retirementPadding.left}" x2="${
+        retirementChartWidth - retirementPadding.right
+      }" y1="${y.toFixed(2)}" y2="${y.toFixed(2)}" />`;
+    })
+    .join('');
+
+  const retirementGridVertical = retirementYearTicks
+    .map((tick) => {
+      const x = retirementXScale(tick);
+      return `<line y1="${retirementPadding.top}" y2="${
+        retirementChartHeight - retirementPadding.bottom
+      }" x1="${x.toFixed(2)}" x2="${x.toFixed(2)}" />`;
+    })
+    .join('');
+
+  const retirementXAxisLabels = retirementYearTicks
+    .map((tick) => {
+      const x = retirementXScale(tick);
+      return `<text x="${x.toFixed(2)}" y="${
+        retirementChartHeight - retirementPadding.bottom + 24
+      }" text-anchor="middle">Year ${tick}</text>`;
+    })
+    .join('');
+
+  const retirementYAxisLabels = retirementYAxisTicks
+    .map((tick) => {
+      const y = retirementYScale(tick);
+      return `<text x="${retirementPadding.left - 12}" y="${(y + 6).toFixed(
+        2,
+      )}" text-anchor="end">${formatCurrency(tick)}</text>`;
+    })
+    .join('');
+
+  const finalRetirementBalance =
+    retirementSeries?.[retirementSeries.length - 1]?.balance || 0;
+  const finalRetirementShortfall =
+    shortfallSeries?.[shortfallSeries.length - 1]?.gap || 0;
+  const finalRetirementSurplus = Math.max(
+    finalRetirementBalance - requiredNestEgg,
+    0,
+  );
+
+  const retirementStatusTag = canProjectRetirement
+    ? finalRetirementShortfall > 0
+      ? `<div class="tag tag--alert">Shortfall at retirement: ${formatCurrency(
+          finalRetirementShortfall,
+        )}</div>`
+      : finalRetirementSurplus > 0
+      ? `<div class="tag tag--success">On track — surplus of ${formatCurrency(
+          finalRetirementSurplus,
+        )}</div>`
+      : '<div class="tag tag--success">On track — no projected shortfall</div>'
+    : '';
+
+  const retirementReadinessCopy = canProjectRetirement
+    ? finalRetirementShortfall > 0
+      ? `Staying on the current path is projected to build ${formatCurrency(
+          finalRetirementBalance,
+        )} by age ${retirementAge}, leaving a shortfall of ${formatCurrency(
+          finalRetirementShortfall,
+        )} versus the estimated need of ${formatCurrency(requiredNestEgg)}.`
+      : `Projected savings of ${formatCurrency(
+          finalRetirementBalance,
+        )} by age ${retirementAge} exceed the estimated need of ${formatCurrency(
+          requiredNestEgg,
+        )}, eliminating any shortfall.`
+    : yearsToRetirement !== null && yearsToRetirement <= 0
+    ? 'Adjust the target retirement age to be greater than your current age to calculate readiness.'
+    : 'Add your target retirement age and desired income to calculate readiness.';
+
+  const retirementSummaryDetails = [];
+  if (retirementAge) {
+    retirementSummaryDetails.push(`Target age ${retirementAge}`);
+  }
+  if (yearsToRetirement !== null) {
+    retirementSummaryDetails.push(
+      yearsToRetirement > 0
+        ? `${displayYearsToRetirement} years away`
+        : 'Retirement timing has already arrived',
+    );
+  }
+  if (requiredNestEgg > 0) {
+    retirementSummaryDetails.push(`Estimated need ${formatCurrency(requiredNestEgg)}`);
+  }
+  const retirementSummaryLine = retirementSummaryDetails.length
+    ? retirementSummaryDetails.join(' • ')
+    : 'Retirement goal details pending';
+
+  const retirementChart =
+    canProjectRetirement && retirementChartMax > 0
+      ? `<div class="projection-graph">
+          <svg viewBox="0 0 ${retirementChartWidth} ${retirementChartHeight}" role="img" aria-label="Retirement readiness projection">
+            <g class="projection-grid">
+              ${retirementGridHorizontal}${retirementGridVertical}
+            </g>
+            <line class="projection-axis" x1="${retirementPadding.left}" y1="${
+          retirementChartHeight - retirementPadding.bottom
+        }" x2="${retirementChartWidth - retirementPadding.right}" y2="${
+          retirementChartHeight - retirementPadding.bottom
+        }" />
+            <line class="projection-axis" x1="${retirementPadding.left}" y1="${retirementPadding.top}" x2="${retirementPadding.left}" y2="${
+          retirementChartHeight - retirementPadding.bottom
+        }" />
+            <path class="projection-line projection-line--current" d="${retirementBalancePath}" />
+            <path class="projection-line projection-line--shortfall" d="${retirementShortfallPath}" />
+            <g class="projection-markers projection-markers--current">
+              ${retirementBalanceMarkers}
+            </g>
+            <g class="projection-markers projection-markers--shortfall">
+              ${retirementShortfallMarkers}
+            </g>
+            <g class="projection-labels projection-labels--x">
+              ${retirementXAxisLabels}
+            </g>
+            <g class="projection-labels projection-labels--y">
+              ${retirementYAxisLabels}
+            </g>
+            <text class="projection-axis-label" x="${
+              retirementPadding.left +
+              (retirementChartWidth - retirementPadding.left - retirementPadding.right) / 2
+            }" y="${retirementChartHeight - 10}" text-anchor="middle">Time to retirement (years)</text>
+            <text class="projection-axis-label" transform="rotate(-90)" x="${-
+              (retirementPadding.top +
+                (retirementChartHeight - retirementPadding.top - retirementPadding.bottom) / 2)
+            }" y="${retirementPadding.left - 52}" text-anchor="middle">Value</text>
+          </svg>
+          <div class="projection-legend">
+            <span class="legend-item"><span class="legend-swatch legend-swatch--current"></span>Projected assets (current contributions)</span>
+            <span class="legend-item"><span class="legend-swatch legend-swatch--shortfall"></span>Remaining shortfall to reach ${formatCurrency(
+              requiredNestEgg,
+            )}</span>
+          </div>
+        </div>`
+      : `<p class="projection-empty">Add retirement timing and income goals to see projected shortfall.</p>`;
 
   const recommendationCopy =
     recommendedMonthlySavings > monthlySavings && recommendedMonthlySavings > 0
@@ -438,6 +698,13 @@ const buildReport = (data) => {
         <p>${recommendationCopy}</p>
         <p>${projectionComparison}</p>
         ${projectionChart}
+      </article>
+      <article class="card">
+        <h3>Retirement readiness</h3>
+        <p>${retirementSummaryLine}</p>
+        ${retirementStatusTag}
+        <p>${retirementReadinessCopy}</p>
+        ${retirementChart}
       </article>
       <article class="card">
         <h3>Cash flow pulse</h3>
