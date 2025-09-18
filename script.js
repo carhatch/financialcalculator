@@ -110,28 +110,23 @@ const buildReport = (data) => {
       : 0;
 
   const investableBalance =
-    parseNumber(data.assetCash) +
-    parseNumber(data.assetInvestments) +
-    parseNumber(data.assetRetirement) +
-    parseNumber(data.assetOther);
+    parseNumber(data.assetInvestments) + parseNumber(data.assetRetirement);
 
   const age = parseNumber(data.age);
   const retirementAge = parseNumber(data.retirementAge);
   const yearsToRetirement =
     retirementAge && age ? retirementAge - age : null;
+  const baseAge = age > 0 ? age : 0;
+  const ageTarget = 100;
+  const yearsUntilAgeTarget = Math.max(ageTarget - baseAge, 0);
+  const projectionHorizon = Math.max(Math.ceil(yearsUntilAgeTarget), 1);
   const monthsToRetirement =
     yearsToRetirement !== null
-      ? Math.max(Math.ceil(yearsToRetirement * 12), 0)
+      ? Math.max(Math.ceil(Math.max(yearsToRetirement, 0) * 12), 0)
       : 0;
 
   const planningHorizonYears =
     yearsToRetirement !== null ? Math.max(Math.round(yearsToRetirement), 0) : null;
-  const projectionHorizon = Math.max(
-    yearsToRetirement !== null && yearsToRetirement > 0
-      ? Math.ceil(yearsToRetirement)
-      : 30,
-    1,
-  );
 
   const lifeExpectancyInput = parseNumber(data.lifeExpectancy);
   const defaultLifeExpectancy = 100;
@@ -187,9 +182,11 @@ const buildReport = (data) => {
     ? Math.max(0, recommendedMonthlySavings)
     : 0;
 
+  const savingsGap = recommendedMonthlySavings - monthlySavings;
+
   const contributionYears =
-    yearsToRetirement !== null && yearsToRetirement > 0
-      ? yearsToRetirement
+    yearsToRetirement !== null
+      ? Math.max(yearsToRetirement, 0)
       : projectionHorizon;
 
   const buildProjectionSeries = (
@@ -292,6 +289,9 @@ const buildReport = (data) => {
 
   const xTickInterval = Math.max(1, Math.round(projectionHorizon / 5));
   const xTicks = projectionYears.filter((year) => year % xTickInterval === 0);
+  if (xTicks[xTicks.length - 1] !== projectionHorizon) {
+    xTicks.push(projectionHorizon);
+  }
 
   const yTickCount = 4;
   const yTicks = Array.from({ length: yTickCount + 1 }, (_, index) =>
@@ -338,7 +338,8 @@ const buildReport = (data) => {
               ${xTicks
                 .map((tick) => {
                   const x = xScale(tick);
-                  return `<text x="${x.toFixed(2)}" y="${chartHeight - chartPadding.bottom + 24}" text-anchor="middle">Year ${tick}</text>`;
+                  const ageLabel = Math.round(baseAge + tick);
+                  return `<text x="${x.toFixed(2)}" y="${chartHeight - chartPadding.bottom + 24}" text-anchor="middle">Age ${ageLabel}</text>`;
                 })
                 .join('')}
             </g>
@@ -364,440 +365,495 @@ const buildReport = (data) => {
         </div>`
       : `<p class="projection-empty">Enter savings and asset details to preview long-term growth.</p>`;
 
+  const horizonAgeLabel = Math.round(baseAge + projectionHorizon);
   const projectionComparison =
     additionalGrowth > 0
       ? `Following the recommended path could build approximately ${formatCurrency(
           finalRecommendedBalance,
-        )} in ${projectionHorizon} years — about ${formatCurrency(
+        )} by age ${horizonAgeLabel} — about ${formatCurrency(
           additionalGrowth,
         )} more than continuing with the current approach.`
       : `At the current settings, both paths are projected to reach about ${formatCurrency(
           finalCurrentBalance,
-        )} in ${projectionHorizon} years.`;
+        )} by age ${horizonAgeLabel}.`;
 
   const yearsToRetirementExact =
     yearsToRetirement !== null ? Math.max(yearsToRetirement, 0) : null;
   const retirementYearsAway =
-    yearsToRetirementExact !== null ? Math.max(Math.ceil(yearsToRetirementExact), 0) : null;
+    yearsToRetirementExact !== null ? Math.ceil(yearsToRetirementExact) : null;
   const displayYearsToRetirement =
-    yearsToRetirementExact !== null ? Math.max(Math.round(yearsToRetirementExact), 0) : null;
+    yearsToRetirement !== null && yearsToRetirement > 0
+      ? Math.round(yearsToRetirement)
+      : yearsToRetirement !== null
+      ? 0
+      : null;
   const drawdownYears = Math.max(
     Math.ceil(Math.max(retirementDurationYears, 1)),
     1,
   );
-  const retirementHorizonYears =
-    retirementYearsAway !== null ? retirementYearsAway + drawdownYears : null;
-  const canProjectRetirement =
-    retirementYearsAway !== null &&
-    retirementYearsAway > 0 &&
-    retirementHorizonYears !== null &&
-    retirementHorizonYears > retirementYearsAway &&
-    requiredNestEgg > 0;
-
-  let retirementTrajectory = null;
-  let retirementStartYear = null;
-  let balanceAtRetirement = 0;
-  let retirementRunOutYear = null;
-  let inheritanceBalanceAt100 = null;
-
-  if (canProjectRetirement) {
-    const totalMonths = retirementHorizonYears * 12;
-    const retirementStartMonth = Math.max(
-      Math.ceil(yearsToRetirementExact * 12),
-      0,
-    );
-    const accumulationMonthlyRate = Math.pow(1 + assumedReturnRate, 1 / 12) - 1;
-    const drawdownMonthlyRate = Math.pow(1 + conservativeReturnRate, 1 / 12) - 1;
-    let balance = investableBalance;
-    let runOutMonth = null;
-    retirementStartYear = retirementStartMonth / 12;
-    retirementTrajectory = [{ year: 0, balance }];
-
-    for (let month = 0; month < totalMonths; month++) {
-      const inAccumulation = month < retirementStartMonth;
-      const monthlyRate = inAccumulation ? accumulationMonthlyRate : drawdownMonthlyRate;
-      balance = balance * (1 + monthlyRate);
-
-      if (inAccumulation) {
-        balance += monthlySavings;
-      } else if (monthlyRetirementWithdrawal > 0) {
-        balance -= monthlyRetirementWithdrawal;
-      }
-
-      if (inAccumulation && month + 1 === retirementStartMonth) {
-        balanceAtRetirement = balance;
-      }
-
-      if (!inAccumulation && runOutMonth === null && balance <= 0) {
-        runOutMonth = month + 1;
-        balance = 0;
-      } else if (!inAccumulation && balance < 0) {
-        balance = 0;
-      }
-
-      if ((month + 1) % 12 === 0) {
-        retirementTrajectory.push({ year: (month + 1) / 12, balance });
-      }
-    }
-
-    if (!balanceAtRetirement) {
-      const retirementPoint = retirementTrajectory.find(
-        (point) => point.year >= retirementStartYear,
-      );
-      balanceAtRetirement = retirementPoint ? retirementPoint.balance : balance;
-    }
-
-    if (runOutMonth !== null) {
-      retirementRunOutYear = runOutMonth / 12;
-    }
-
-    if (retirementTrajectory.length) {
-      const ageTarget = 100;
-      const yearsUntilTarget = age
-        ? Math.max(Math.round(ageTarget - age), 0)
-        : ageTarget;
-      const pointAtTarget = retirementTrajectory.find(
-        (point) => point.year >= yearsUntilTarget,
-      );
-      const fallbackPoint = retirementTrajectory[retirementTrajectory.length - 1];
-      inheritanceBalanceAt100 = Math.max(
-        (pointAtTarget || fallbackPoint)?.balance ?? 0,
-        0,
-      );
-    }
-  }
-
-  const retirementChartMax = Math.max(
-    0,
-    requiredNestEgg,
-    ...(retirementTrajectory?.map((point) => point.balance) || []),
-  );
-
-  const retirementChartWidth = 640;
-  const retirementChartHeight = 320;
-  const retirementPadding = { top: 20, right: 32, bottom: 48, left: 72 };
-
-  const retirementXScale = (year) =>
-    retirementPadding.left +
-    (year / retirementHorizonYears) *
-      (retirementChartWidth - retirementPadding.left - retirementPadding.right);
-
-  const retirementYScale = (value) => {
-    if (!retirementChartMax) {
-      return retirementChartHeight - retirementPadding.bottom;
-    }
-    const usableHeight =
-      retirementChartHeight - retirementPadding.top - retirementPadding.bottom;
-    return (
-      retirementChartHeight -
-      retirementPadding.bottom -
-      (value / retirementChartMax) * usableHeight
-    );
-  };
-
-  const retirementTickInterval = canProjectRetirement
-    ? Math.max(1, Math.round(retirementHorizonYears / 5))
-    : 1;
-
-  let retirementYearTicks = [];
-  if (canProjectRetirement) {
-    retirementYearTicks = Array.from(
-      { length: retirementHorizonYears + 1 },
-      (_, index) => index,
-    ).filter((year) => year % retirementTickInterval === 0);
-
-    if (
-      retirementYearTicks[retirementYearTicks.length - 1] !== retirementHorizonYears
-    ) {
-      retirementYearTicks.push(retirementHorizonYears);
-    }
-  }
-
-  const retirementYAxisSteps = 4;
-  const retirementYAxisTicks = Array.from(
-    { length: retirementYAxisSteps + 1 },
-    (_, index) => (retirementChartMax / retirementYAxisSteps) * index,
-  );
-
-  const retirementBalancePath =
-    retirementTrajectory
-      ?.map((point, idx) => {
-        const command = idx === 0 ? 'M' : 'L';
-        return `${command}${retirementXScale(point.year).toFixed(2)} ${retirementYScale(
-          point.balance,
-        ).toFixed(2)}`;
-      })
-      .join('') || '';
-
-  const retirementMarkerInterval = canProjectRetirement
-    ? Math.max(1, Math.round(retirementHorizonYears / 6))
-    : 1;
-  const buildRetirementMarkers = (series) =>
-    series
-      ?.filter(
-        (point, index, arr) =>
-          index === 0 || index === arr.length - 1 || point.year % retirementMarkerInterval === 0,
-      )
-      .map((point) => {
-        const x = retirementXScale(point.year);
-        const y = retirementYScale(point.balance);
-        return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="3" />`;
-      })
-      .join('') || '';
-
-  const retirementBalanceMarkers = buildRetirementMarkers(retirementTrajectory);
-
-  const yearsIntoRetirementAtRunOut =
-    retirementRunOutYear !== null && retirementStartYear !== null
-      ? Math.max(retirementRunOutYear - retirementStartYear, 0)
-      : null;
-  const runOutAge =
-    retirementRunOutYear !== null && age
-      ? Math.round(age + retirementRunOutYear)
-      : retirementRunOutYear !== null && retirementAge
-      ? Math.round(retirementAge + Math.max(yearsIntoRetirementAtRunOut || 0, 0))
-      : null;
-  const yearsIntoRetirementDisplay =
-    yearsIntoRetirementAtRunOut !== null
-      ? Math.max(Math.round(yearsIntoRetirementAtRunOut), 0)
-      : null;
-  const yearsIntoRetirementText =
-    yearsIntoRetirementAtRunOut !== null
-      ? yearsIntoRetirementAtRunOut < 1
-        ? '< 1'
-        : `${Math.max(yearsIntoRetirementDisplay || 1, 1)}`
-      : null;
-  const yearsIntoRetirementDescription =
-    yearsIntoRetirementText !== null
-      ? yearsIntoRetirementText === '< 1'
-        ? 'less than 1 year'
-        : `${yearsIntoRetirementText} year${yearsIntoRetirementText === '1' ? '' : 's'}`
-      : null;
   const targetRetirementYears =
     retirementDurationYears > 0 ? retirementDurationYears : drawdownYears;
   const longevityAge =
     retirementAge > 0 ? retirementAge + Math.max(retirementDurationYears, 0) : null;
 
-  const retirementEventMarkers = canProjectRetirement
-    ? (() => {
-        const events = [];
-        if (retirementStartYear !== null) {
-          const x = retirementXScale(retirementStartYear);
-          events.push(
-            `<line class="projection-event-line" x1="${x.toFixed(2)}" x2="${x.toFixed(
-              2,
-            )}" y1="${retirementPadding.top}" y2="${
-              retirementChartHeight - retirementPadding.bottom
-            }" />`,
-          );
-          events.push(
-            `<text class="projection-event-label" x="${x.toFixed(2)}" y="${
-              retirementChartHeight - retirementPadding.bottom + 20
-            }" text-anchor="middle">Retirement</text>`,
-          );
-        }
-        if (retirementRunOutYear !== null) {
-          const x = retirementXScale(
-            Math.min(retirementRunOutYear, retirementHorizonYears),
-          );
-          const label = yearsIntoRetirementText !== null
-            ? yearsIntoRetirementText === '< 1'
+  const totalPlanYears =
+    yearsToRetirementExact !== null
+      ? yearsToRetirementExact + Math.max(retirementDurationYears, 0)
+      : 0;
+  const retirementChartYears = projectionHorizon;
+  const retirementSimulationYears = Math.max(totalPlanYears, retirementChartYears);
+  const canProjectRetirement =
+    retirementAge > 0 &&
+    age > 0 &&
+    retirementSimulationYears > 0 &&
+    requiredNestEgg > 0;
+
+  const simulateRetirementPlan = (monthlyContribution, accumulationAnnualRate) => {
+    if (!canProjectRetirement) {
+      return null;
+    }
+    const accumulationMonthlyRate =
+      Math.pow(1 + Math.max(accumulationAnnualRate, 0), 1 / 12) - 1;
+    const totalMonths = Math.max(Math.round(retirementSimulationYears * 12), 0);
+    const retirementStartMonth =
+      yearsToRetirementExact !== null
+        ? Math.max(Math.ceil(yearsToRetirementExact * 12), 0)
+        : null;
+
+    let balance = investableBalance;
+    const trajectory = [{ year: 0, balance, age: baseAge }];
+    let balanceAtRetirement =
+      retirementStartMonth === 0 ? balance : null;
+    let runOutMonth = null;
+
+    if (totalMonths === 0) {
+      return {
+        trajectory,
+        chartTrajectory: trajectory,
+        retirementStartYear:
+          retirementStartMonth !== null ? retirementStartMonth / 12 : null,
+        balanceAtRetirement: balance,
+        runOutYear: null,
+        finalBalance: balance,
+        inheritanceBalanceAt100: balance,
+      };
+    }
+
+    for (let month = 0; month < totalMonths; month++) {
+      const inDrawdown =
+        retirementStartMonth !== null ? month >= retirementStartMonth : false;
+      const monthlyRate = inDrawdown
+        ? conservativeMonthlyRate
+        : accumulationMonthlyRate;
+      balance = balance * (1 + monthlyRate);
+
+      if (!inDrawdown) {
+        balance += monthlyContribution;
+      } else if (monthlyRetirementWithdrawal > 0) {
+        balance -= monthlyRetirementWithdrawal;
+      }
+
+      if (
+        !inDrawdown &&
+        retirementStartMonth !== null &&
+        month + 1 === retirementStartMonth
+      ) {
+        balanceAtRetirement = balance;
+      }
+
+      if (inDrawdown && runOutMonth === null && balance <= 0) {
+        runOutMonth = month + 1;
+        balance = 0;
+      } else if (inDrawdown && balance < 0) {
+        balance = 0;
+      }
+
+      if ((month + 1) % 12 === 0 || month === totalMonths - 1) {
+        const year = (month + 1) / 12;
+        const ageAtPoint = baseAge + year;
+        trajectory.push({ year, balance, age: ageAtPoint });
+      }
+    }
+
+    const retirementStartYear =
+      retirementStartMonth !== null ? retirementStartMonth / 12 : null;
+
+    if (balanceAtRetirement === null && retirementStartYear !== null) {
+      const retirementPoint = trajectory.find((point) => point.year >= retirementStartYear);
+      balanceAtRetirement = retirementPoint
+        ? retirementPoint.balance
+        : trajectory[trajectory.length - 1]?.balance ?? balance;
+    } else if (balanceAtRetirement === null) {
+      balanceAtRetirement = trajectory[trajectory.length - 1]?.balance ?? balance;
+    }
+
+    const runOutYear = runOutMonth !== null ? runOutMonth / 12 : null;
+    const finalBalance = trajectory[trajectory.length - 1]?.balance ?? balance;
+    const targetPoint =
+      trajectory.find((point) => point.year >= yearsUntilAgeTarget) ??
+      trajectory[trajectory.length - 1];
+    const inheritanceBalanceAt100 = Math.max(targetPoint?.balance ?? 0, 0);
+    const chartTrajectory = trajectory.filter(
+      (point) => point.year <= retirementChartYears + 1e-6,
+    );
+
+    return {
+      trajectory,
+      chartTrajectory,
+      retirementStartYear,
+      balanceAtRetirement,
+      runOutYear,
+      finalBalance,
+      inheritanceBalanceAt100,
+    };
+  };
+
+  const analyzeRetirementPlan = (plan) => {
+    if (!plan) return null;
+
+    const { retirementStartYear, runOutYear } = plan;
+    const yearsIntoRetirementAtRunOut =
+      runOutYear !== null && retirementStartYear !== null
+        ? Math.max(runOutYear - retirementStartYear, 0)
+        : null;
+    const yearsIntoRetirementText =
+      yearsIntoRetirementAtRunOut !== null
+        ? yearsIntoRetirementAtRunOut < 1
+          ? '< 1'
+          : `${Math.round(yearsIntoRetirementAtRunOut)}`
+        : null;
+    const yearsIntoRetirementDescription =
+      yearsIntoRetirementText !== null
+        ? yearsIntoRetirementText === '< 1'
+          ? 'less than 1 year'
+          : `${yearsIntoRetirementText} year${yearsIntoRetirementText === '1' ? '' : 's'}`
+        : null;
+    const runOutAge =
+      runOutYear !== null ? Math.round(baseAge + runOutYear) : null;
+    const retirementStartAge =
+      retirementStartYear !== null
+        ? Math.round(baseAge + retirementStartYear)
+        : retirementAge || null;
+    const shortfallAtRetirement = Math.max(
+      requiredNestEgg - plan.balanceAtRetirement,
+      0,
+    );
+    const safeWithdrawalIncome = plan.balanceAtRetirement * conservativeReturnRate;
+    const safeWithdrawalDifference =
+      desiredRetirementIncome > 0
+        ? safeWithdrawalIncome - desiredRetirementIncome
+        : null;
+    const coversLongevity =
+      yearsIntoRetirementAtRunOut === null ||
+      yearsIntoRetirementAtRunOut >= targetRetirementYears;
+
+    return {
+      ...plan,
+      yearsIntoRetirementAtRunOut,
+      yearsIntoRetirementText,
+      yearsIntoRetirementDescription,
+      runOutAge,
+      retirementStartAge,
+      shortfallAtRetirement,
+      safeWithdrawalIncome,
+      safeWithdrawalDifference,
+      coversLongevity,
+    };
+  };
+
+  const buildRetirementPlainLanguage = (metrics, { planType, monthlyContribution, accumulationRate }) => {
+    if (!metrics) return '';
+    const insights = [];
+    const rateText = formatPercent(accumulationRate);
+    const targetAge =
+      retirementAge > 0
+        ? Math.round(retirementAge)
+        : metrics.retirementStartAge ?? Math.round(baseAge + (metrics.retirementStartYear || 0));
+    const monthlyDescriptor =
+      monthlyContribution > 0
+        ? `saving ${formatCurrency(monthlyContribution)} each month`
+        : 'relying on your current balance';
+
+    if (planType === 'recommended') {
+      if (monthlyContribution > 0) {
+        insights.push(
+          `Following the recommended savings of ${formatCurrency(
+            monthlyContribution,
+          )} per month at about ${rateText} growth could build roughly ${formatCurrency(
+            metrics.balanceAtRetirement,
+          )} by age ${targetAge}.`,
+        );
+      } else {
+        insights.push(
+          `With the recommended allocation, your current balance could grow to about ${formatCurrency(
+            metrics.balanceAtRetirement,
+          )} by age ${targetAge} at about ${rateText} growth.`,
+        );
+      }
+    } else {
+      if (targetAge) {
+        insights.push(
+          `If you continue ${monthlyDescriptor} at about ${rateText} growth, you could have roughly ${formatCurrency(
+            metrics.balanceAtRetirement,
+          )} by age ${targetAge}.`,
+        );
+      } else {
+        insights.push(
+          `If you continue ${monthlyDescriptor} at about ${rateText} growth, you could build roughly ${formatCurrency(
+            metrics.balanceAtRetirement,
+          )} over time.`,
+        );
+      }
+    }
+
+    if (desiredRetirementIncome > 0 && metrics.safeWithdrawalDifference !== null) {
+      const gapWord = metrics.safeWithdrawalDifference >= 0 ? 'surplus' : 'shortfall';
+      insights.push(
+        `Safe withdrawal of 4% with a conservative ${formatPercent(
+          conservativeReturnRate,
+        )} return would provide about ${formatCurrency(
+          metrics.safeWithdrawalIncome,
+        )} per year, leaving a ${gapWord} of ${formatCurrency(
+          Math.abs(metrics.safeWithdrawalDifference),
+        )} compared with your ${formatCurrency(desiredRetirementIncome)} goal.`,
+      );
+    } else if (metrics.safeWithdrawalIncome > 0) {
+      insights.push(
+        `Safe withdrawal of 4% with a conservative ${formatPercent(
+          conservativeReturnRate,
+        )} return would provide about ${formatCurrency(
+          metrics.safeWithdrawalIncome,
+        )} per year from that balance.`,
+      );
+    }
+
+    if (metrics.inheritanceBalanceAt100 !== null) {
+      if (metrics.inheritanceBalanceAt100 > 0) {
+        insights.push(
+          `${planType === 'recommended' ? 'Under this approach' : 'At the current pace'}, the balance is projected to hold about ${formatCurrency(
+            metrics.inheritanceBalanceAt100,
+          )} at age 100.`,
+        );
+      } else if (metrics.runOutAge && metrics.runOutAge <= ageTarget) {
+        insights.push(
+          `${planType === 'recommended' ? 'This approach' : 'We'} calculate that savings would run out around age ${Math.round(
+            metrics.runOutAge,
+          )}, leaving nothing by age 100.`,
+        );
+      } else {
+        insights.push('We calculate that the balance would be fully used by age 100.');
+      }
+    }
+
+    if (
+      wantsInheritance &&
+      desiredInheritanceAmount > 0 &&
+      metrics.inheritanceBalanceAt100 !== null
+    ) {
+      const inheritanceDifference =
+        metrics.inheritanceBalanceAt100 - desiredInheritanceAmount;
+      const inheritanceWord = inheritanceDifference >= 0 ? 'surplus' : 'shortfall';
+      insights.push(
+        `Your inheritance goal of ${formatCurrency(
+          desiredInheritanceAmount,
+        )} would end with a ${inheritanceWord} of ${formatCurrency(
+          Math.abs(inheritanceDifference),
+        )} based on the age 100 projection.`,
+      );
+    }
+
+    if (
+      metrics.runOutAge &&
+      metrics.runOutAge <= ageTarget &&
+      metrics.yearsIntoRetirementDescription
+    ) {
+      insights.push(
+        `${planType === 'recommended' ? 'Under this plan' : 'At the current pace'}, funds are estimated to run out about ${metrics.yearsIntoRetirementDescription} into retirement (age ${Math.round(
+          metrics.runOutAge,
+        )}).`,
+      );
+    }
+
+    return `<div class="retirement-summary">${insights
+      .map((sentence) => `<p>${sentence}</p>`)
+      .join('')}</div>`;
+  };
+
+  const renderRetirementChart = (
+    metrics,
+    { lineClass, markerClass, legendLabel, legendSwatch },
+  ) => {
+    if (!metrics || !metrics.chartTrajectory.length) {
+      return `<p class="projection-empty">Add retirement timing and income goals to see projected drawdown.</p>`;
+    }
+
+    const chartMax = Math.max(
+      0,
+      requiredNestEgg,
+      ...metrics.chartTrajectory.map((point) => point.balance),
+    );
+
+    if (chartMax <= 0) {
+      return `<p class="projection-empty">Add retirement timing and income goals to see projected drawdown.</p>`;
+    }
+
+    const chartWidth = 640;
+    const chartHeight = 320;
+    const padding = { top: 20, right: 32, bottom: 48, left: 72 };
+
+    const xScale = (year) =>
+      padding.left +
+      (year / projectionHorizon) *
+        (chartWidth - padding.left - padding.right);
+
+    const yScale = (value) => {
+      if (!chartMax) {
+        return chartHeight - padding.bottom;
+      }
+      const usableHeight = chartHeight - padding.top - padding.bottom;
+      return chartHeight - padding.bottom - (value / chartMax) * usableHeight;
+    };
+
+    const path = metrics.chartTrajectory
+      .map((point, idx) => {
+        const command = idx === 0 ? 'M' : 'L';
+        return `${command}${xScale(point.year).toFixed(2)} ${yScale(point.balance).toFixed(2)}`;
+      })
+      .join('');
+
+    const markerInterval = Math.max(1, Math.round(projectionHorizon / 6));
+    const markers = metrics.chartTrajectory
+      .filter(
+        (point, index, arr) =>
+          index === 0 ||
+          index === arr.length - 1 ||
+          point.year % markerInterval === 0,
+      )
+      .map((point) => {
+        const x = xScale(point.year);
+        const y = yScale(point.balance);
+        return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="3" />`;
+      })
+      .join('');
+
+    const tickInterval = Math.max(1, Math.round(projectionHorizon / 5));
+    const xTicks = [];
+    for (let year = 0; year <= projectionHorizon; year += tickInterval) {
+      xTicks.push(year);
+    }
+    if (xTicks[xTicks.length - 1] !== projectionHorizon) {
+      xTicks.push(projectionHorizon);
+    }
+
+    const yTickCount = 4;
+    const yTicks = Array.from({ length: yTickCount + 1 }, (_, index) => (chartMax / yTickCount) * index);
+
+    const gridHorizontal = yTicks
+      .map((tick) => {
+        const y = yScale(tick);
+        return `<line x1="${padding.left}" x2="${chartWidth - padding.right}" y1="${y.toFixed(2)}" y2="${y.toFixed(2)}" />`;
+      })
+      .join('');
+
+    const gridVertical = xTicks
+      .map((tick) => {
+        const x = xScale(tick);
+        return `<line y1="${padding.top}" y2="${chartHeight - padding.bottom}" x1="${x.toFixed(2)}" x2="${x.toFixed(2)}" />`;
+      })
+      .join('');
+
+    const xLabels = xTicks
+      .map((tick) => {
+        const x = xScale(tick);
+        const ageLabel = Math.round(baseAge + tick);
+        return `<text x="${x.toFixed(2)}" y="${chartHeight - padding.bottom + 24}" text-anchor="middle">Age ${ageLabel}</text>`;
+      })
+      .join('');
+
+    const yLabels = yTicks
+      .map((tick) => {
+        const y = yScale(tick);
+        return `<text x="${padding.left - 12}" y="${(y + 6).toFixed(2)}" text-anchor="end">${formatCurrency(tick)}</text>`;
+      })
+      .join('');
+
+    const events = (() => {
+      const markers = [];
+      if (metrics.retirementStartYear !== null) {
+        const clampedYear = Math.min(metrics.retirementStartYear, projectionHorizon);
+        const x = xScale(clampedYear);
+        const retirementAgeLabel =
+          metrics.retirementStartAge ?? Math.round(baseAge + clampedYear);
+        markers.push(
+          `<line class="projection-event-line" x1="${x.toFixed(2)}" x2="${x.toFixed(
+            2,
+          )}" y1="${padding.top}" y2="${chartHeight - padding.bottom}" />`,
+        );
+        markers.push(
+          `<text class="projection-event-label" x="${x.toFixed(2)}" y="${chartHeight - padding.bottom + 20}" text-anchor="middle">Retirement (Age ${retirementAgeLabel})</text>`,
+        );
+      }
+      if (metrics.runOutYear !== null) {
+        const clampedYear = Math.min(metrics.runOutYear, projectionHorizon);
+        const x = xScale(clampedYear);
+        const ageLabel = metrics.runOutAge ?? Math.round(baseAge + metrics.runOutYear);
+        const label =
+          metrics.yearsIntoRetirementText !== null
+            ? metrics.yearsIntoRetirementText === '< 1'
               ? 'Run out <1 yr in'
-              : `Run out ${yearsIntoRetirementText} yr${
-                  yearsIntoRetirementText === '1' ? '' : 's'
+              : `Run out ${metrics.yearsIntoRetirementText} yr${
+                  metrics.yearsIntoRetirementText === '1' ? '' : 's'
                 } in`
             : 'Run out';
-          events.push(
-            `<line class="projection-event-line projection-event-line--warning" x1="${x.toFixed(
-              2,
-            )}" x2="${x.toFixed(2)}" y1="${retirementPadding.top}" y2="${
-              retirementChartHeight - retirementPadding.bottom
-            }" />`,
-          );
-          events.push(
-            `<text class="projection-event-label projection-event-label--warning" x="${x.toFixed(
-              2,
-            )}" y="${retirementChartHeight - retirementPadding.bottom + 20}" text-anchor="middle">${label}</text>`,
-          );
-        }
-        return events.join('');
-      })()
-    : '';
-
-  const retirementGridHorizontal = retirementYAxisTicks
-    .map((tick) => {
-      const y = retirementYScale(tick);
-      return `<line x1="${retirementPadding.left}" x2="${
-        retirementChartWidth - retirementPadding.right
-      }" y1="${y.toFixed(2)}" y2="${y.toFixed(2)}" />`;
-    })
-    .join('');
-
-  const retirementGridVertical = retirementYearTicks
-    .map((tick) => {
-      const x = retirementXScale(tick);
-      return `<line y1="${retirementPadding.top}" y2="${
-        retirementChartHeight - retirementPadding.bottom
-      }" x1="${x.toFixed(2)}" x2="${x.toFixed(2)}" />`;
-    })
-    .join('');
-
-  const retirementXAxisLabels = retirementYearTicks
-    .map((tick) => {
-      const x = retirementXScale(tick);
-      return `<text x="${x.toFixed(2)}" y="${
-        retirementChartHeight - retirementPadding.bottom + 24
-      }" text-anchor="middle">Year ${tick}</text>`;
-    })
-    .join('');
-
-  const retirementYAxisLabels = retirementYAxisTicks
-    .map((tick) => {
-      const y = retirementYScale(tick);
-      return `<text x="${retirementPadding.left - 12}" y="${(y + 6).toFixed(
-        2,
-      )}" text-anchor="end">${formatCurrency(tick)}</text>`;
-    })
-    .join('');
-
-  const finalRetirementBalance =
-    retirementTrajectory?.[retirementTrajectory.length - 1]?.balance || 0;
-  const shortfallAtRetirement = Math.max(requiredNestEgg - balanceAtRetirement, 0);
-  const safeWithdrawalIncome = balanceAtRetirement * conservativeReturnRate;
-  const safeWithdrawalDifference =
-    desiredRetirementIncome > 0
-      ? safeWithdrawalIncome - desiredRetirementIncome
-      : null;
-  const coversLongevity =
-    yearsIntoRetirementAtRunOut === null ||
-    yearsIntoRetirementAtRunOut >= targetRetirementYears;
-
-  const retirementStatusTag = canProjectRetirement
-    ? shortfallAtRetirement > 0
-      ? `<div class="tag tag--alert">Shortfall at retirement: ${formatCurrency(
-          shortfallAtRetirement,
-        )}</div>`
-      : coversLongevity
-      ? `<div class="tag tag--success">On pace — withdrawals funded through age ${
-          longevityAge ? Math.round(longevityAge) : retirementAge + drawdownYears
-        }</div>`
-      : `<div class="tag tag--alert">Withdrawals exhaust savings around age ${
-          runOutAge ?? Math.round(retirementAge + (yearsIntoRetirementAtRunOut || 0))
-        }</div>`
-    : '';
-
-  const retirementReadinessCopy = canProjectRetirement
-    ? shortfallAtRetirement > 0
-      ? `Current contributions are projected to build ${formatCurrency(
-          balanceAtRetirement,
-        )} by age ${retirementAge}, leaving ${formatCurrency(
-          shortfallAtRetirement,
-        )} less than the ${formatCurrency(
-          requiredNestEgg,
-        )} estimated to fund ${formatCurrency(desiredRetirementIncome)} per year.`
-      : coversLongevity
-      ? `Projected savings of ${formatCurrency(
-          balanceAtRetirement,
-        )} at age ${retirementAge} support ${formatCurrency(
-          desiredRetirementIncome,
-        )} annually through age ${
-          longevityAge ? Math.round(longevityAge) : retirementAge + drawdownYears
-        }, leaving approximately ${formatCurrency(finalRetirementBalance)} remaining.`
-      : `Projected savings meet the income goal at retirement, but drawing ${formatCurrency(
-          desiredRetirementIncome,
-        )} annually is estimated to deplete savings around age ${
-          runOutAge ?? Math.round(retirementAge + (yearsIntoRetirementAtRunOut || 0))
-        } (${yearsIntoRetirementDescription || '0 years'} into retirement). Increase savings or adjust withdrawals to extend coverage.`
-    : yearsToRetirement !== null && yearsToRetirement <= 0
-    ? 'Adjust the target retirement age to be greater than your current age to calculate readiness.'
-    : 'Add your target retirement age and desired income to calculate readiness.';
-
-  const retirementPlainLanguage = canProjectRetirement
-    ? (() => {
-        const insights = [];
-        const monthlySavingsDescriptor =
-          monthlySavings > 0
-            ? `saving ${formatCurrency(monthlySavings)} each month`
-            : 'relying on your current balance';
-        insights.push(
-          `If you continue ${monthlySavingsDescriptor} at about ${formatPercent(
-            assumedReturnRate,
-          )} growth, you could have roughly ${formatCurrency(
-            balanceAtRetirement,
-          )} by age ${retirementAge}.`,
+        markers.push(
+          `<line class="projection-event-line projection-event-line--warning" x1="${x.toFixed(
+            2,
+          )}" x2="${x.toFixed(2)}" y1="${padding.top}" y2="${chartHeight - padding.bottom}" />`,
         );
+        markers.push(
+          `<text class="projection-event-label projection-event-label--warning" x="${x.toFixed(
+            2,
+          )}" y="${chartHeight - padding.bottom + 20}" text-anchor="middle">${label} (Age ${ageLabel})</text>`,
+        );
+      }
+      return markers.join('');
+    })();
 
-        if (desiredRetirementIncome > 0 && safeWithdrawalDifference !== null) {
-          const gapWord = safeWithdrawalDifference >= 0 ? 'surplus' : 'shortfall';
-          insights.push(
-            `Safe withdrawal of 4% with a conservative ${formatPercent(
-              conservativeReturnRate,
-            )} return would provide about ${formatCurrency(
-              safeWithdrawalIncome,
-            )} per year, leaving a ${gapWord} of ${formatCurrency(
-              Math.abs(safeWithdrawalDifference),
-            )} compared with your ${formatCurrency(desiredRetirementIncome)} goal.`,
-          );
-        } else if (safeWithdrawalIncome > 0) {
-          insights.push(
-            `Safe withdrawal of 4% with a conservative ${formatPercent(
-              conservativeReturnRate,
-            )} return would provide about ${formatCurrency(
-              safeWithdrawalIncome,
-            )} per year from that balance.`,
-          );
-        }
+    return `<div class="projection-graph">
+        <svg viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="Retirement readiness projection">
+          <g class="projection-grid">
+            ${gridHorizontal}${gridVertical}
+          </g>
+          <line class="projection-axis" x1="${padding.left}" y1="${chartHeight - padding.bottom}" x2="${chartWidth - padding.right}" y2="${chartHeight - padding.bottom}" />
+          <line class="projection-axis" x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${chartHeight - padding.bottom}" />
+          <path class="projection-line ${lineClass}" d="${path}" />
+          <g class="projection-markers ${markerClass}">
+            ${markers}
+          </g>
+          <g class="projection-events">
+            ${events}
+          </g>
+          <g class="projection-labels projection-labels--x">
+            ${xLabels}
+          </g>
+          <g class="projection-labels projection-labels--y">
+            ${yLabels}
+          </g>
+        </svg>
+        <div class="projection-legend">
+          <span class="legend-item"><span class="legend-swatch ${legendSwatch}"></span>${legendLabel}</span>
+        </div>
+      </div>`;
+  };
 
-        if (inheritanceBalanceAt100 !== null) {
-          if (inheritanceBalanceAt100 > 0) {
-            insights.push(
-              `We calculate that your savings would still hold about ${formatCurrency(
-                inheritanceBalanceAt100,
-              )} at age 100.`,
-            );
-          } else if (runOutAge) {
-            insights.push(
-              `We calculate that your savings would run out around age ${Math.round(
-                runOutAge,
-              )}, leaving nothing by age 100.`,
-            );
-          } else {
-            insights.push('We calculate that the balance would be fully used by age 100.');
-          }
-        }
+  const currentPlanMetrics = canProjectRetirement
+    ? analyzeRetirementPlan(
+        simulateRetirementPlan(monthlySavings, assumedReturnRate),
+      )
+    : null;
 
-        if (inheritanceBalanceAt100 !== null) {
-          if (wantsInheritance && desiredInheritanceAmount > 0) {
-            const inheritanceDifference =
-              inheritanceBalanceAt100 - desiredInheritanceAmount;
-            const inheritanceWord = inheritanceDifference >= 0 ? 'surplus' : 'shortfall';
-            insights.push(
-              `Your inheritance goal of ${formatCurrency(
-                desiredInheritanceAmount,
-              )} would end with a ${inheritanceWord} of ${formatCurrency(
-                Math.abs(inheritanceDifference),
-              )} based on the age 100 projection.`,
-            );
-          } else if (wantsInheritance) {
-            insights.push(
-              `You noted you want to leave an inheritance — the current path points to about ${formatCurrency(
-                inheritanceBalanceAt100,
-              )} available at age 100 for beneficiaries.`,
-            );
-          } else if (inheritanceBalanceAt100 > 0) {
-            insights.push(
-              `Even without a stated inheritance goal, about ${formatCurrency(
-                inheritanceBalanceAt100,
-              )} could remain for beneficiaries at age 100.`,
-            );
-          }
-        }
-
-        return `<div class="retirement-summary">${insights
-          .map((sentence) => `<p>${sentence}</p>`)
-          .join('')}</div>`;
-      })()
-    : '';
+  const finalRetirementBalance = currentPlanMetrics?.finalBalance || 0;
+  const balanceAtRetirement = currentPlanMetrics?.balanceAtRetirement || 0;
 
   const retirementSummaryDetails = [];
   if (retirementAge) {
@@ -832,46 +888,177 @@ const buildReport = (data) => {
     ? retirementSummaryDetails.join(' • ')
     : 'Retirement goal details pending';
 
-  const retirementChart =
-    canProjectRetirement && retirementChartMax > 0
-      ? `<div class="projection-graph">
-          <svg viewBox="0 0 ${retirementChartWidth} ${retirementChartHeight}" role="img" aria-label="Retirement readiness projection">
-            <g class="projection-grid">
-              ${retirementGridHorizontal}${retirementGridVertical}
-            </g>
-            <line class="projection-axis" x1="${retirementPadding.left}" y1="${
-          retirementChartHeight - retirementPadding.bottom
-        }" x2="${retirementChartWidth - retirementPadding.right}" y2="${
-          retirementChartHeight - retirementPadding.bottom
-        }" />
-            <line class="projection-axis" x1="${retirementPadding.left}" y1="${retirementPadding.top}" x2="${retirementPadding.left}" y2="${
-          retirementChartHeight - retirementPadding.bottom
-        }" />
-            <path class="projection-line projection-line--current" d="${retirementBalancePath}" />
-            <g class="projection-markers projection-markers--current">
-              ${retirementBalanceMarkers}
-            </g>
-            <g class="projection-events">
-              ${retirementEventMarkers}
-            </g>
-            <g class="projection-labels projection-labels--x">
-              ${retirementXAxisLabels}
-            </g>
-            <g class="projection-labels projection-labels--y">
-              ${retirementYAxisLabels}
-            </g>
-          </svg>
-          <div class="projection-legend">
-            <span class="legend-item"><span class="legend-swatch legend-swatch--current"></span>Account value (contributions until retirement, then ${formatCurrency(
-              desiredRetirementIncome,
-            )}/yr withdrawals @ ${formatPercent(conservativeReturnRate)})</span>
-          </div>
-        </div>`
-      : `<p class="projection-empty">Add retirement timing and income goals to see projected drawdown.</p>`;
+  const retirementStatusTag = canProjectRetirement && currentPlanMetrics
+    ? currentPlanMetrics.shortfallAtRetirement > 0
+      ? `<div class="tag tag--alert">Shortfall at retirement: ${formatCurrency(
+          currentPlanMetrics.shortfallAtRetirement,
+        )}</div>`
+      : currentPlanMetrics.coversLongevity
+      ? `<div class="tag tag--success">On pace — withdrawals funded through age ${
+          longevityAge ? Math.round(Math.min(longevityAge, ageTarget)) : ageTarget
+        }</div>`
+      : `<div class="tag tag--alert">Withdrawals exhaust savings around age ${
+          currentPlanMetrics.runOutAge ??
+          Math.round(
+            (retirementAge || baseAge) +
+              (currentPlanMetrics.yearsIntoRetirementAtRunOut || 0),
+          )
+        }</div>`
+    : '';
 
-  const savingsGap = recommendedMonthlySavings - monthlySavings;
+  const retirementReadinessCopy = canProjectRetirement && currentPlanMetrics
+    ? currentPlanMetrics.shortfallAtRetirement > 0
+      ? `Current contributions are projected to build ${formatCurrency(
+          currentPlanMetrics.balanceAtRetirement,
+        )} by age ${retirementAge}, leaving ${formatCurrency(
+          currentPlanMetrics.shortfallAtRetirement,
+        )} less than the ${formatCurrency(
+          requiredNestEgg,
+        )} estimated to fund ${formatCurrency(desiredRetirementIncome)} per year.`
+      : currentPlanMetrics.coversLongevity
+      ? `Projected savings of ${formatCurrency(
+          currentPlanMetrics.balanceAtRetirement,
+        )} at age ${retirementAge} support ${formatCurrency(
+          desiredRetirementIncome,
+        )} annually through age ${
+          longevityAge ? Math.round(Math.min(longevityAge, ageTarget)) : ageTarget
+        }, leaving approximately ${formatCurrency(
+          currentPlanMetrics.inheritanceBalanceAt100 ?? finalRetirementBalance,
+        )} remaining.`
+      : `Projected savings meet the income goal at retirement, but drawing ${formatCurrency(
+          desiredRetirementIncome,
+        )} annually is estimated to deplete savings around age ${
+          currentPlanMetrics.runOutAge ??
+          Math.round(
+            (retirementAge || baseAge) +
+              (currentPlanMetrics.yearsIntoRetirementAtRunOut || 0),
+          )
+        } (${currentPlanMetrics.yearsIntoRetirementDescription || '0 years'} into retirement). Increase savings or adjust withdrawals to extend coverage.`
+    : yearsToRetirement !== null && yearsToRetirement <= 0
+    ? 'Adjust the target retirement age to be greater than your current age to calculate readiness.'
+    : 'Add your target retirement age and desired income to calculate readiness.';
+
+  const retirementPlainLanguage = canProjectRetirement
+    ? buildRetirementPlainLanguage(currentPlanMetrics, {
+        planType: 'current',
+        monthlyContribution: monthlySavings,
+        accumulationRate: assumedReturnRate,
+      })
+    : '';
+
+  const retirementChart = canProjectRetirement
+    ? renderRetirementChart(currentPlanMetrics, {
+        lineClass: 'projection-line--current',
+        markerClass: 'projection-markers--current',
+        legendLabel: `Account value (current contributions until retirement, then ${formatCurrency(
+          desiredRetirementIncome,
+        )}/yr withdrawals @ ${formatPercent(conservativeReturnRate)})`,
+        legendSwatch: 'legend-swatch--current',
+      })
+    : `<p class="projection-empty">Add retirement timing and income goals to see projected drawdown.</p>`;
+
+  const hasRecommendation =
+    recommendedMonthlySavings > 0 && savingsGap > 1 && canProjectRetirement;
+  const recommendedPlanMetrics =
+    hasRecommendation && canProjectRetirement
+      ? analyzeRetirementPlan(
+          simulateRetirementPlan(
+            recommendedMonthlySavings,
+            recommendedReturnRate,
+          ),
+        )
+      : null;
+
+  const recommendedStatusTag =
+    hasRecommendation && recommendedPlanMetrics
+      ? recommendedPlanMetrics.shortfallAtRetirement > 0
+        ? `<div class="tag tag--alert">Gap remaining: ${formatCurrency(
+            recommendedPlanMetrics.shortfallAtRetirement,
+          )}</div>`
+        : recommendedPlanMetrics.coversLongevity
+        ? `<div class="tag tag--success">Recommendation funds withdrawals through age ${
+            longevityAge ? Math.round(Math.min(longevityAge, ageTarget)) : ageTarget
+          }</div>`
+        : `<div class="tag tag--alert">Recommendation still runs out around age ${
+            recommendedPlanMetrics.runOutAge ??
+            Math.round(
+              (retirementAge || baseAge) +
+                (recommendedPlanMetrics.yearsIntoRetirementAtRunOut || 0),
+            )
+          }</div>`
+      : '';
+
+  const recommendedReadinessCopy =
+    hasRecommendation && recommendedPlanMetrics
+      ? recommendedPlanMetrics.shortfallAtRetirement > 0
+        ? `Saving ${formatCurrency(
+            recommendedMonthlySavings,
+          )} per month is projected to reach ${formatCurrency(
+            recommendedPlanMetrics.balanceAtRetirement,
+          )} by age ${retirementAge}, leaving a remaining gap of ${formatCurrency(
+            recommendedPlanMetrics.shortfallAtRetirement,
+          )} versus the ${formatCurrency(requiredNestEgg)} target.`
+        : recommendedPlanMetrics.coversLongevity
+        ? `Saving ${formatCurrency(
+            recommendedMonthlySavings,
+          )} per month is projected to deliver ${formatCurrency(
+            recommendedPlanMetrics.balanceAtRetirement,
+          )} at age ${retirementAge}, funding ${formatCurrency(
+            desiredRetirementIncome,
+          )} annually through age ${
+            longevityAge ? Math.round(Math.min(longevityAge, ageTarget)) : ageTarget
+          }.`
+        : `Saving ${formatCurrency(
+            recommendedMonthlySavings,
+          )} per month reaches the retirement balance goal, but withdrawals are expected to deplete savings around age ${
+            recommendedPlanMetrics.runOutAge ??
+            Math.round(
+              (retirementAge || baseAge) +
+                (recommendedPlanMetrics.yearsIntoRetirementAtRunOut || 0),
+            )
+          }.`
+      : '';
+
+  const recommendedPlainLanguage =
+    hasRecommendation && recommendedPlanMetrics
+      ? buildRetirementPlainLanguage(recommendedPlanMetrics, {
+          planType: 'recommended',
+          monthlyContribution: recommendedMonthlySavings,
+          accumulationRate: recommendedReturnRate,
+        })
+      : '';
+
+  const recommendedChart =
+    hasRecommendation && recommendedPlanMetrics
+      ? renderRetirementChart(recommendedPlanMetrics, {
+          lineClass: 'projection-line--recommended',
+          markerClass: 'projection-markers--recommended',
+          legendLabel: `Account value (recommended contributions until retirement, then ${formatCurrency(
+            desiredRetirementIncome,
+          )}/yr withdrawals @ ${formatPercent(conservativeReturnRate)})`,
+          legendSwatch: 'legend-swatch--recommended',
+        })
+      : '';
+
+  const recommendedCardMessage = hasRecommendation && recommendedPlanMetrics
+    ? ''
+    : 'No recommendations at this time.';
+  const recommendedSummaryLine = hasRecommendation && recommendedPlanMetrics
+    ? `Recommended savings ${formatCurrency(
+        recommendedMonthlySavings,
+      )}/mo • Projected balance ${formatCurrency(
+        recommendedPlanMetrics.balanceAtRetirement,
+      )}`
+    : 'No recommendations at this time.';
+  const recommendedCardBody = hasRecommendation && recommendedPlanMetrics
+    ? `${recommendedStatusTag}
+          <p>${recommendedReadinessCopy}</p>
+          ${recommendedPlainLanguage}
+          ${recommendedChart}`
+    : `<p>${recommendedCardMessage}</p>`;
+
   const recommendationCopy =
-    recommendedMonthlySavings > 0 && savingsGap > 1
+    hasRecommendation
       ? `Saving ${formatCurrency(
           recommendedMonthlySavings,
         )} per month at an expected ${formatPercent(
@@ -1027,24 +1214,76 @@ const buildReport = (data) => {
       </div>
     </div>
     <div class="report__grid">
-      <article class="card">
-        <h3>Savings outlook</h3>
-        <p>
-          Current investment mix: <strong>${escapeHTML(
-            investmentLabel(investmentPreference),
-          )}</strong>
-        </p>
-        <p>${recommendationCopy}</p>
-        <p>${projectionComparison}</p>
-        ${projectionChart}
+      <article class="card card--collapsible">
+        <div class="card__header">
+          <h3>Savings outlook</h3>
+          <button
+            type="button"
+            class="card__toggle"
+            data-section-label="savings outlook"
+            aria-expanded="true"
+          >
+            <span class="sr-only">Collapse savings outlook details</span>
+            <span aria-hidden="true" class="card__toggle-icon"></span>
+          </button>
+        </div>
+        <div class="card__content">
+          <p>
+            Current investment mix: <strong>${escapeHTML(
+              investmentLabel(investmentPreference),
+            )}</strong>
+          </p>
+          <p>${recommendationCopy}</p>
+          <p>${projectionComparison}</p>
+          ${projectionChart}
+        </div>
       </article>
-      <article class="card">
-        <h3>Retirement readiness</h3>
-        <p>${retirementSummaryLine}</p>
-        ${retirementStatusTag}
-        <p>${retirementReadinessCopy}</p>
-        ${retirementPlainLanguage}
-        ${retirementChart}
+      <article class="card card--collapsible">
+        <div class="card__header">
+          <h3>Retirement readiness - current plan</h3>
+          <button
+            type="button"
+            class="card__toggle"
+            data-section-label="retirement readiness - current plan"
+            aria-expanded="true"
+          >
+            <span class="sr-only">Collapse current plan details</span>
+            <span aria-hidden="true" class="card__toggle-icon"></span>
+          </button>
+        </div>
+        <div class="card__content">
+          <p>${retirementSummaryLine}</p>
+          ${retirementStatusTag}
+          <p>${retirementReadinessCopy}</p>
+          ${retirementPlainLanguage}
+          ${retirementChart}
+        </div>
+      </article>
+      <article class="card card--collapsible${
+        hasRecommendation && recommendedPlanMetrics ? '' : ' is-collapsed'
+      }">
+        <div class="card__header">
+          <h3>Retirement readiness - recommended plan</h3>
+          <button
+            type="button"
+            class="card__toggle"
+            data-section-label="retirement readiness - recommended plan"
+            aria-expanded="${
+              hasRecommendation && recommendedPlanMetrics ? 'true' : 'false'
+            }"
+          >
+            <span class="sr-only">${
+              hasRecommendation && recommendedPlanMetrics
+                ? 'Collapse recommended plan details'
+                : 'Expand recommended plan details'
+            }</span>
+            <span aria-hidden="true" class="card__toggle-icon"></span>
+          </button>
+        </div>
+        <div class="card__content">
+          <p>${recommendedSummaryLine}</p>
+          ${recommendedCardBody}
+        </div>
       </article>
       <article class="card card--collapsible is-collapsed">
         <div class="card__header">
@@ -1161,41 +1400,54 @@ const buildReport = (data) => {
         </div>
       </article>
 
-      <article class="card">
-        <h3>Goal tracker</h3>
-        ${goalHighlights.length
-          ? `<ul class="data-list">${goalHighlights
-              .map((goal) => `<li>${goal}</li>`)
-              .join('')}</ul>`
-          : '<p>No goals captured yet. Use this space to align on what matters most.</p>'}
-        ${
-          yearsToRetirement !== null
-            ? `<p>Retirement horizon: ${
-                displayYearsToRetirement ?? yearsToRetirement
-              } years • Desired income: ${formatCurrency(
-                desiredRetirementIncome,
-              )}</p>`
-            : desiredRetirementIncome > 0
-            ? `<p>Desired retirement income: ${formatCurrency(
-                desiredRetirementIncome,
-              )}</p>`
-            : ''
-        }
-        <p>Risk comfort: <strong>${escapeHTML(data.riskTolerance || 'Not captured')}</strong></p>
-        <p>Investment posture: <strong>${escapeHTML(
-          investmentLabel(investmentPreference),
-        )}</strong></p>
-        <p>Longevity planning age: ${Math.round(effectiveLifeExpectancy)}</p>
-        <p>
-          Planning horizon focus:
+      <article class="card card--collapsible">
+        <div class="card__header">
+          <h3>Goal tracker</h3>
+          <button
+            type="button"
+            class="card__toggle"
+            data-section-label="goal tracker"
+            aria-expanded="true"
+          >
+            <span class="sr-only">Collapse goal tracker details</span>
+            <span aria-hidden="true" class="card__toggle-icon"></span>
+          </button>
+        </div>
+        <div class="card__content">
+          ${goalHighlights.length
+            ? `<ul class="data-list">${goalHighlights
+                .map((goal) => `<li>${goal}</li>`)
+                .join('')}</ul>`
+            : '<p>No goals captured yet. Use this space to align on what matters most.</p>'}
           ${
-            planningHorizonYears !== null
-              ? planningHorizonYears > 0
-                ? formatYears(planningHorizonYears)
-                : 'At retirement'
-              : 'Set a target retirement age to calculate'
+            yearsToRetirement !== null
+              ? `<p>Retirement horizon: ${
+                  displayYearsToRetirement ?? yearsToRetirement
+                } years • Desired income: ${formatCurrency(
+                  desiredRetirementIncome,
+                )}</p>`
+              : desiredRetirementIncome > 0
+              ? `<p>Desired retirement income: ${formatCurrency(
+                  desiredRetirementIncome,
+                )}</p>`
+              : ''
           }
-        </p>
+          <p>Risk comfort: <strong>${escapeHTML(data.riskTolerance || 'Not captured')}</strong></p>
+          <p>Investment posture: <strong>${escapeHTML(
+            investmentLabel(investmentPreference),
+          )}</strong></p>
+          <p>Longevity planning age: ${Math.round(effectiveLifeExpectancy)}</p>
+          <p>
+            Planning horizon focus:
+            ${
+              planningHorizonYears !== null
+                ? planningHorizonYears > 0
+                  ? formatYears(planningHorizonYears)
+                  : 'At retirement'
+                : 'Set a target retirement age to calculate'
+            }
+          </p>
+        </div>
       </article>
 
       <article class="card card--collapsible is-collapsed">
@@ -1232,14 +1484,27 @@ const buildReport = (data) => {
         </div>
       </article>
 
-      <article class="card">
-        <h3>Immediate next steps</h3>
-        <ol>
-          ${recommendations.map((item) => `<li>${item}</li>`).join('')}
-        </ol>
-        <p>
-          Revisit this plan quarterly to capture life changes and update projections. Sharing this summary with your advisor will ensure ongoing accountability.
-        </p>
+      <article class="card card--collapsible">
+        <div class="card__header">
+          <h3>Immediate next steps</h3>
+          <button
+            type="button"
+            class="card__toggle"
+            data-section-label="immediate next steps"
+            aria-expanded="true"
+          >
+            <span class="sr-only">Collapse immediate next steps details</span>
+            <span aria-hidden="true" class="card__toggle-icon"></span>
+          </button>
+        </div>
+        <div class="card__content">
+          <ol>
+            ${recommendations.map((item) => `<li>${item}</li>`).join('')}
+          </ol>
+          <p>
+            Revisit this plan quarterly to capture life changes and update projections. Sharing this summary with your advisor will ensure ongoing accountability.
+          </p>
+        </div>
       </article>
     </div>
   `;
