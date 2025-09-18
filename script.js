@@ -74,6 +74,7 @@ const investmentLabel = (value) =>
   ) || 'Not specified';
 
 const buildReport = (data) => {
+  const formatYears = (value) => `${value} year${value === 1 ? '' : 's'}`;
   const incomes = [
     { label: 'Primary salary / wages', value: parseNumber(data.incomeSalary) },
     { label: 'Secondary income', value: parseNumber(data.incomeSecondary) },
@@ -120,13 +121,14 @@ const buildReport = (data) => {
       ? Math.max(Math.ceil(yearsToRetirement * 12), 0)
       : 0;
 
-  const planningHorizonInput = parseNumber(data.planningHorizon);
-  const projectionHorizon =
-    planningHorizonInput > 0
-      ? Math.max(Math.ceil(planningHorizonInput), 1)
-      : yearsToRetirement !== null && yearsToRetirement > 0
-      ? Math.max(Math.ceil(yearsToRetirement), 1)
-      : 10;
+  const planningHorizonYears =
+    yearsToRetirement !== null ? Math.max(Math.round(yearsToRetirement), 0) : null;
+  const projectionHorizon = Math.max(
+    yearsToRetirement !== null && yearsToRetirement > 0
+      ? Math.ceil(yearsToRetirement)
+      : 30,
+    1,
+  );
 
   const lifeExpectancyInput = parseNumber(data.lifeExpectancy);
   const defaultLifeExpectancy = 100;
@@ -257,6 +259,23 @@ const buildReport = (data) => {
 
   const currentPath = buildPath(currentSeries);
   const recommendedPath = buildPath(recommendedSeries);
+  const markerInterval = Math.max(1, Math.round(projectionHorizon / 6));
+  const buildMarkers = (series) =>
+    series
+      .filter(
+        (point, index) =>
+          index === 0 ||
+          index === series.length - 1 ||
+          point.year % markerInterval === 0,
+      )
+      .map((point) => {
+        const x = xScale(point.year);
+        const y = yScale(point.balance);
+        return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="3" />`;
+      })
+      .join('');
+  const currentMarkers = buildMarkers(currentSeries);
+  const recommendedMarkers = buildMarkers(recommendedSeries);
 
   const xTickInterval = Math.max(1, Math.round(projectionHorizon / 5));
   const xTicks = projectionYears.filter((year) => year % xTickInterval === 0);
@@ -297,22 +316,10 @@ const buildReport = (data) => {
             <path class="projection-line projection-line--current" d="${currentPath}" />
             <path class="projection-line projection-line--recommended" d="${recommendedPath}" />
             <g class="projection-markers projection-markers--current">
-              ${currentSeries
-                .map((point) => {
-                  const x = xScale(point.year);
-                  const y = yScale(point.balance);
-                  return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="4" />`;
-                })
-                .join('')}
+              ${currentMarkers}
             </g>
             <g class="projection-markers projection-markers--recommended">
-              ${recommendedSeries
-                .map((point) => {
-                  const x = xScale(point.year);
-                  const y = yScale(point.balance);
-                  return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="4" />`;
-                })
-                .join('')}
+              ${recommendedMarkers}
             </g>
             <g class="projection-labels projection-labels--x">
               ${xTicks
@@ -461,23 +468,24 @@ const buildReport = (data) => {
       })
       .join('') || '';
 
-  const retirementBalanceMarkers =
-    retirementSeries
-      ?.map((point) => {
+  const retirementMarkerInterval = canProjectRetirement
+    ? Math.max(1, Math.round(retirementYearsAway / 6))
+    : 1;
+  const buildRetirementMarkers = (series, key) =>
+    series
+      ?.filter(
+        (point, index, arr) =>
+          index === 0 || index === arr.length - 1 || point.year % retirementMarkerInterval === 0,
+      )
+      .map((point) => {
         const x = retirementXScale(point.year);
-        const y = retirementYScale(point.balance);
-        return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="4" />`;
+        const y = retirementYScale(point[key]);
+        return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="3" />`;
       })
       .join('') || '';
 
-  const retirementShortfallMarkers =
-    shortfallSeries
-      ?.map((point) => {
-        const x = retirementXScale(point.year);
-        const y = retirementYScale(point.gap);
-        return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="4" />`;
-      })
-      .join('') || '';
+  const retirementBalanceMarkers = buildRetirementMarkers(retirementSeries, 'balance');
+  const retirementShortfallMarkers = buildRetirementMarkers(shortfallSeries, 'gap');
 
   const retirementGridHorizontal = retirementYAxisTicks
     .map((tick) => {
@@ -790,80 +798,119 @@ const buildReport = (data) => {
         <p>${retirementReadinessCopy}</p>
         ${retirementChart}
       </article>
-      <article class="card">
-        <h3>Cash flow pulse</h3>
-        <ul class="data-list">
-          ${incomes
-            .map(
-              (item) => `
-                <li>
-                  <strong>${formatCurrency(item.value)}</strong>
-                  <span>${item.label}</span>
-                </li>
-              `,
-            )
-            .join('')}
-        </ul>
-        <div class="tag">Net cash flow: ${formatCurrency(netCashFlow)}</div>
-        <p>
-          After current savings contributions of ${formatCurrency(
-            monthlySavings,
-          )}, surplus remaining each month is ${formatCurrency(surplusAfterSavings)}.
-        </p>
+      <article class="card card--collapsible is-collapsed">
+        <div class="card__header">
+          <h3>Cash flow pulse</h3>
+          <button
+            type="button"
+            class="card__toggle"
+            data-section-label="cash flow"
+            aria-expanded="false"
+          >
+            <span class="sr-only">Expand cash flow details</span>
+            <span aria-hidden="true" class="card__toggle-icon"></span>
+          </button>
+        </div>
+        <div class="card__content">
+          <ul class="data-list">
+            ${incomes
+              .map(
+                (item) => `
+                  <li>
+                    <strong>${formatCurrency(item.value)}</strong>
+                    <span>${item.label}</span>
+                  </li>
+                `,
+              )
+              .join('')}
+          </ul>
+          <div class="tag">Net cash flow: ${formatCurrency(netCashFlow)}</div>
+          <p>
+            After current savings contributions of ${formatCurrency(
+              monthlySavings,
+            )}, surplus remaining each month is ${formatCurrency(surplusAfterSavings)}.
+          </p>
+        </div>
       </article>
 
-      <article class="card">
-        <h3>Essential expenses</h3>
-        <ul class="data-list">
-          ${expenses
-            .map(
-              (item) => `
-                <li>
-                  <strong>${formatCurrency(item.value)}</strong>
-                  <span>${item.label}</span>
-                </li>
-              `,
-            )
-            .join('')}
-        </ul>
-        <p>Total monthly lifestyle spending: ${formatCurrency(totalExpenses)}</p>
+      <article class="card card--collapsible is-collapsed">
+        <div class="card__header">
+          <h3>Essential expenses</h3>
+          <button
+            type="button"
+            class="card__toggle"
+            data-section-label="essential expenses"
+            aria-expanded="false"
+          >
+            <span class="sr-only">Expand essential expenses details</span>
+            <span aria-hidden="true" class="card__toggle-icon"></span>
+          </button>
+        </div>
+        <div class="card__content">
+          <ul class="data-list">
+            ${expenses
+              .map(
+                (item) => `
+                  <li>
+                    <strong>${formatCurrency(item.value)}</strong>
+                    <span>${item.label}</span>
+                  </li>
+                `,
+              )
+              .join('')}
+          </ul>
+          <p>Total monthly lifestyle spending: ${formatCurrency(totalExpenses)}</p>
+        </div>
       </article>
 
-      <article class="card">
-        <h3>Balance sheet</h3>
-        <p>
-          Assets total ${formatCurrency(totalAssets)} versus liabilities of ${formatCurrency(
-    totalLiabilities,
-  )}, yielding a net worth of ${formatCurrency(netWorth)}.
-        </p>
-        <ul class="data-list">
-          ${assets
-            .map(
-              (item) => `
-                <li>
-                  <strong>${formatCurrency(item.value)}</strong>
-                  <span>${item.label}</span>
-                </li>
-              `,
-            )
-            .join('')}
-        </ul>
-        <hr />
-        <ul class="data-list">
-          ${liabilities
-            .map(
-              (item) => `
-                <li>
-                  <strong>${formatCurrency(item.value)}</strong>
-                  <span>${item.label}</span>
-                </li>
-              `,
-            )
-            .join('')}
-        </ul>
-        <p>
-          Emergency reserves cover ${emergencyCoverage.toFixed(1)} months versus a target of ${emergencyTargetMonths} months.
-        </p>
+      <article class="card card--collapsible is-collapsed">
+        <div class="card__header">
+          <h3>Balance sheet</h3>
+          <button
+            type="button"
+            class="card__toggle"
+            data-section-label="balance sheet"
+            aria-expanded="false"
+          >
+            <span class="sr-only">Expand balance sheet details</span>
+            <span aria-hidden="true" class="card__toggle-icon"></span>
+          </button>
+        </div>
+        <div class="card__content">
+          <p>
+            Assets total ${formatCurrency(totalAssets)} versus liabilities of ${formatCurrency(
+      totalLiabilities,
+    )}, yielding a net worth of ${formatCurrency(netWorth)}.
+          </p>
+          <ul class="data-list">
+            ${assets
+              .map(
+                (item) => `
+                  <li>
+                    <strong>${formatCurrency(item.value)}</strong>
+                    <span>${item.label}</span>
+                  </li>
+                `,
+              )
+              .join('')}
+          </ul>
+          <hr />
+          <ul class="data-list">
+            ${liabilities
+              .map(
+                (item) => `
+                  <li>
+                    <strong>${formatCurrency(item.value)}</strong>
+                    <span>${item.label}</span>
+                  </li>
+                `,
+              )
+              .join('')}
+          </ul>
+          <p>
+            Emergency reserves cover ${emergencyCoverage.toFixed(1)} months versus a target of ${emergencyTargetMonths} months.
+          </p>
+        </div>
       </article>
 
       <article class="card">
@@ -894,32 +941,47 @@ const buildReport = (data) => {
         <p>
           Planning horizon focus:
           ${
-            data.planningHorizon
-              ? `${escapeHTML(data.planningHorizon)} years`
-              : `${projectionHorizon} years`
+            planningHorizonYears !== null
+              ? planningHorizonYears > 0
+                ? formatYears(planningHorizonYears)
+                : 'At retirement'
+              : 'Set a target retirement age to calculate'
           }
         </p>
       </article>
 
-      <article class="card">
-        <h3>Protection review</h3>
-        <ul class="data-list">
-          <li>
-            <strong>${formatCurrency(parseNumber(data.lifeInsurance))}</strong>
-            <span>Life insurance coverage</span>
-          </li>
-          <li>
-            <strong>${formatCurrency(parseNumber(data.disabilityInsurance))}</strong>
-            <span>Monthly disability benefit</span>
-          </li>
-          <li>
-            <strong>${escapeHTML(data.estatePlanning || 'No update')}</strong>
-            <span>Estate planning status</span>
-          </li>
-        </ul>
-        ${planningNotes.length
-          ? `<p>${planningNotes.join(' • ')}</p>`
-          : '<p>No additional risk notes captured.</p>'}
+      <article class="card card--collapsible is-collapsed">
+        <div class="card__header">
+          <h3>Protection review</h3>
+          <button
+            type="button"
+            class="card__toggle"
+            data-section-label="protection"
+            aria-expanded="false"
+          >
+            <span class="sr-only">Expand protection details</span>
+            <span aria-hidden="true" class="card__toggle-icon"></span>
+          </button>
+        </div>
+        <div class="card__content">
+          <ul class="data-list">
+            <li>
+              <strong>${formatCurrency(parseNumber(data.lifeInsurance))}</strong>
+              <span>Life insurance coverage</span>
+            </li>
+            <li>
+              <strong>${formatCurrency(parseNumber(data.disabilityInsurance))}</strong>
+              <span>Monthly disability benefit</span>
+            </li>
+            <li>
+              <strong>${escapeHTML(data.estatePlanning || 'No update')}</strong>
+              <span>Estate planning status</span>
+            </li>
+          </ul>
+          ${planningNotes.length
+            ? `<p>${planningNotes.join(' • ')}</p>`
+            : '<p>No additional risk notes captured.</p>'}
+        </div>
       </article>
 
       <article class="card">
@@ -935,10 +997,37 @@ const buildReport = (data) => {
   `;
 };
 
+const initializeReportInteractions = () => {
+  const collapsibleCards = report.querySelectorAll('.card--collapsible');
+  collapsibleCards.forEach((card) => {
+    const toggle = card.querySelector('.card__toggle');
+    if (!toggle) return;
+
+    const srOnly = toggle.querySelector('.sr-only');
+    const sectionLabel = toggle.getAttribute('data-section-label') || 'section';
+
+    const updateState = () => {
+      const isCollapsed = card.classList.contains('is-collapsed');
+      toggle.setAttribute('aria-expanded', (!isCollapsed).toString());
+      if (srOnly) {
+        srOnly.textContent = `${isCollapsed ? 'Expand' : 'Collapse'} ${sectionLabel} details`;
+      }
+    };
+
+    toggle.addEventListener('click', () => {
+      card.classList.toggle('is-collapsed');
+      updateState();
+    });
+
+    updateState();
+  });
+};
+
 const generatePlan = () => {
   const formData = new FormData(form);
   const data = Object.fromEntries(formData.entries());
   report.innerHTML = buildReport(data);
+  initializeReportInteractions();
   reportActions.hidden = false;
   report.scrollIntoView({ behavior: 'smooth', block: 'start' });
 };
